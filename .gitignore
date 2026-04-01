@@ -1,1 +1,4 @@
 /.venv
+.env
+/reasoning_gym_env
+__pycache__/*

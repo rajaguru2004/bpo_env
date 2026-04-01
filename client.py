@@ -1,10 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
-"""Bpo Env Environment Client."""
+"""Customer Support Environment Client."""
 
 from typing import Dict
 
@@ -12,71 +6,53 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from .models import BpoAction, BpoObservation
+from .models import CustomerSupportAction, CustomerSupportObservation
 
 
-class BpoEnv(
-    EnvClient[BpoAction, BpoObservation, State]
+class CustomerSupportEnv(
+    EnvClient[CustomerSupportAction, CustomerSupportObservation, State]
 ):
     """
-    Client for the Bpo Env Environment.
+    Client for the BPO Customer Support Environment.
 
-    This client maintains a persistent WebSocket connection to the environment server,
-    enabling efficient multi-step interactions with lower latency.
-    Each client instance has its own dedicated environment session on the server.
+    Maintains a persistent WebSocket connection to the environment server,
+    enabling multi-step interactions with lower latency.
 
     Example:
-        >>> # Connect to a running server
-        >>> with BpoEnv(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
-        ...
-        ...     result = client.step(BpoAction(message="Hello!"))
-        ...     print(result.observation.echoed_message)
-
-    Example with Docker:
-        >>> # Automatically start container and connect
-        >>> client = BpoEnv.from_docker_image("bpo_env-env:latest")
-        >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(BpoAction(message="Test"))
-        ... finally:
-        ...     client.close()
+        >>> env = CustomerSupportEnv(base_url="http://localhost:8000")
+        >>> result = env.reset(task_name="order_status")
+        >>> print(result.observation.customer_message)
+        >>>
+        >>> result = env.step(CustomerSupportAction(
+        ...     response="I'd be happy to help! Your order #12345 has been shipped."
+        ... ))
+        >>> print(f"Reward: {result.reward}, Done: {result.done}")
+        >>> env.close()
     """
 
-    def _step_payload(self, action: BpoAction) -> Dict:
-        """
-        Convert BpoAction to JSON payload for step message.
+    def _step_payload(self, action: CustomerSupportAction) -> Dict:
+        """Convert CustomerSupportAction to JSON payload."""
+        return {"response": action.response}
 
-        Args:
-            action: BpoAction instance
-
-        Returns:
-            Dictionary representation suitable for JSON encoding
-        """
-        return {
-            "message": action.message,
-        }
-
-    def _parse_result(self, payload: Dict) -> StepResult[BpoObservation]:
-        """
-        Parse server response into StepResult[BpoObservation].
-
-        Args:
-            payload: JSON response data from server
-
-        Returns:
-            StepResult with BpoObservation
-        """
+    def _parse_result(self, payload: Dict) -> StepResult[CustomerSupportObservation]:
+        """Parse server response into StepResult[CustomerSupportObservation]."""
         obs_data = payload.get("observation", {})
-        observation = BpoObservation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
+        observation = CustomerSupportObservation(
+            customer_message=obs_data.get("customer_message", ""),
+            conversation_history=obs_data.get("conversation_history", []),
+            task_name=obs_data.get("task_name", ""),
+            task_difficulty=obs_data.get("task_difficulty", "easy"),
+            step=obs_data.get("step", 0),
+            max_steps=obs_data.get("max_steps", 10),
+            is_resolved=obs_data.get("is_resolved", False),
+            rule_score=obs_data.get("rule_score", 0.0),
+            llm_score=obs_data.get("llm_score", 0.0),
+            final_reward=obs_data.get("final_reward", 0.0),
             done=payload.get("done", False),
             reward=payload.get("reward"),
             metadata=obs_data.get("metadata", {}),
+            task_context=obs_data.get("task_context"),
         )
-
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
@@ -84,15 +60,7 @@ class BpoEnv(
         )
 
     def _parse_state(self, payload: Dict) -> State:
-        """
-        Parse server response into State object.
-
-        Args:
-            payload: JSON response from state request
-
-        Returns:
-            State object with episode_id and step_count
-        """
+        """Parse server response into State object."""
         return State(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),

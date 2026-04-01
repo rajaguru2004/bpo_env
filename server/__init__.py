@@ -6,6 +6,6 @@
 
 """Bpo Env environment server components."""
 
-from .bpo_env_environment import BpoEnvironment
+from .bpo_env_environment import CustomerSupportEnvironment
 
-__all__ = ["BpoEnvironment"]
+__all__ = ["CustomerSupportEnvironment"]
