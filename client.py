@@ -6,7 +6,11 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from .models import CustomerSupportAction, CustomerSupportObservation
+try:
+    from models import CustomerSupportAction, CustomerSupportObservation
+except ImportError:
+    from .models import CustomerSupportAction, CustomerSupportObservation
+
 
 
 class CustomerSupportEnv(
@@ -36,6 +40,7 @@ class CustomerSupportEnv(
 
     def _parse_result(self, payload: Dict) -> StepResult[CustomerSupportObservation]:
         """Parse server response into StepResult[CustomerSupportObservation]."""
+        # In WebSocket mode, the payload itself contains the serialized observation nested under "observation"
         obs_data = payload.get("observation", {})
         observation = CustomerSupportObservation(
             customer_message=obs_data.get("customer_message", ""),

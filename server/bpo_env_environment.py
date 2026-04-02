@@ -12,6 +12,21 @@ import re
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+# Load environment variables from .env if it exists
+# This handles cases where the server is started without sourcing .env
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+if os.path.exists(env_path):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+    except ImportError:
+        # Simple manual fallback for .env loading
+        with open(env_path) as f:
+            for line in f:
+                if "=" in line and not line.startswith("#"):
+                    name, value = line.split("=", 1)
+                    os.environ[name.strip()] = value.strip().strip('"').strip("'")
+
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 

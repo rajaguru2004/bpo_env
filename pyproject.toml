@@ -18,6 +18,7 @@ dependencies = [
     "openenv-core[core]>=0.2.2",
     # OpenAI-compatible client for LLM judge and inference
     "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

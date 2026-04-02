@@ -20,6 +20,20 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
+# Load environment variables from .env if it exists
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(env_path):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+    except ImportError:
+        # Simple manual fallback for .env loading
+        with open(env_path) as f:
+            for line in f:
+                if "=" in line and not line.startswith("#"):
+                    name, value = line.split("=", 1)
+                    os.environ[name.strip()] = value.strip().strip('"').strip("'")
+
 # ---------------------------------------------------------------------------
 # LLM Client Setup
 # ---------------------------------------------------------------------------
@@ -76,6 +90,8 @@ def call_llm_agent(
     messages.extend(conversation_history)
 
     try:
+        print(f"   [⏳ Calling LLM Agent]: {MODEL_NAME} ...")
+        start_time = time.time()
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
@@ -83,6 +99,8 @@ def call_llm_agent(
             temperature=0.7,
             extra_body={"reasoning": {"enabled": True}},
         )
+        duration = time.time() - start_time
+        print(f"   [✅ LLM Response Received]: {duration:.2f}s")
 
         # Preserve reasoning details if present
         choice = response.choices[0]
@@ -149,15 +167,13 @@ def wait_for_server(url: str, timeout: int = 30) -> bool:
 # Task Runner
 # ---------------------------------------------------------------------------
 
+from client import CustomerSupportEnv
+
 def run_task(task_name: str) -> Dict[str, Any]:
     """
-    Run a single task episode using the OpenEnv HTTP API directly.
+    Run a single task episode using the CustomerSupportEnv WebSocket client.
     Returns a summary dict with scores and steps.
     """
-    import json
-    import urllib.request
-
-    headers = {"Content-Type": "application/json"}
     results = {
         "task_name": task_name,
         "steps": 0,
@@ -173,105 +189,98 @@ def run_task(task_name: str) -> Dict[str, Any]:
     print(f"  TASK: {task_name.upper().replace('_', ' ')}")
     print(f"{'='*65}")
 
-    # --- RESET ---
+    # Use the WebSocket client with sync wrapper
+    client_env = CustomerSupportEnv(base_url=SERVER_URL).sync()
+    
     try:
-        reset_body = json.dumps({"task_name": task_name}).encode()
-        req = urllib.request.Request(
-            f"{SERVER_URL}/reset",
-            data=reset_body,
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            reset_data = json.loads(resp.read())
+        with client_env as env:
+            # --- RESET ---
+            try:
+                result = env.reset(task_name=task_name)
+                obs = result.observation
+            except Exception as e:
+                print(f"  [ERROR] Reset failed: {e}")
+                return results
+
+            customer_message = obs.customer_message
+            task_context = obs.task_context
+            max_steps = obs.max_steps
+            conversation_history = obs.conversation_history
+
+            print(f"\n  📋 Task Context: {task_context}")
+            print(f"  👤 Customer: {customer_message}\n")
+
+            rule_scores = []
+            llm_scores = []
+            done = False
+            step = 0
+
+            # --- STEP LOOP ---
+            while not done and step < max_steps:
+                step += 1
+                print(f"  --- Step {step}/{max_steps} ---")
+
+                # Agent generates response
+                agent_response = call_llm_agent(conversation_history, task_context)
+                print(f"  🤖 Agent: {agent_response}")
+
+                # Send step to environment
+                try:
+                    from models import CustomerSupportAction
+                    action = CustomerSupportAction(response=agent_response)
+                    
+                    print(f"   [📡 Sending action to server] ...")
+                    result = env.step(action)
+                    print(f"   [📥 Received response]: reward={result.reward:.3f}, done={result.done}")
+                    
+                    step_obs = result.observation
+                    reward = result.reward or 0.0
+                    done = result.done
+                except Exception as e:
+                    print(f"  [ERROR] Step failed: {e}")
+                    break
+
+                rule_score = getattr(step_obs, "rule_score", 0.0)
+                llm_score = getattr(step_obs, "llm_score", 0.0)
+                next_customer_msg = step_obs.customer_message
+                is_resolved = step_obs.is_resolved
+
+                rule_scores.append(rule_score)
+                llm_scores.append(llm_score)
+
+                print(f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | LLM: {llm_score:.3f} | Resolved: {is_resolved}")
+
+                if not done and next_customer_msg:
+                    print(f"  👤 Customer: {next_customer_msg}")
+                    # Update conversation history for LLM context
+                    conversation_history = step_obs.conversation_history
+
+                results["step_logs"].append({
+                    "step": step,
+                    "agent_response": agent_response[:80] + "...",
+                    "reward": reward,
+                    "rule_score": rule_score,
+                    "llm_score": llm_score,
+                    "resolved": is_resolved,
+                })
+
+                if done:
+                    results["resolved"] = is_resolved
+                    print(f"\n  ✅ Episode ended at step {step} | Resolved: {is_resolved}")
+                    break
+
+            # --- SUMMARY ---
+            results["steps"] = step
+            results["total_reward"] = sum(log["reward"] for log in results["step_logs"])
+            results["avg_reward"] = results["total_reward"] / step if step > 0 else 0.0
+            results["avg_rule_score"] = sum(rule_scores) / len(rule_scores) if rule_scores else 0.0
+            results["avg_llm_score"] = sum(llm_scores) / len(llm_scores) if llm_scores else 0.0
+            
     except Exception as e:
-        print(f"  [ERROR] Reset failed: {e}")
-        return results
-
-    obs = reset_data.get("observation", reset_data)
-    customer_message = obs.get("customer_message", "")
-    task_context = obs.get("task_context")
-    max_steps = obs.get("max_steps", 10)
-    conversation_history = obs.get("conversation_history", [])
-
-    if not conversation_history:
-        conversation_history = [{"role": "user", "content": customer_message}]
-
-    print(f"\n  📋 Task Context: {task_context}")
-    print(f"  👤 Customer: {customer_message}\n")
-
-    rule_scores = []
-    llm_scores = []
-    done = False
-    step = 0
-
-    # --- STEP LOOP ---
-    while not done and step < max_steps:
-        step += 1
-        print(f"  --- Step {step}/{max_steps} ---")
-
-        # Agent generates response
-        agent_response = call_llm_agent(conversation_history, task_context)
-        print(f"  🤖 Agent: {agent_response}")
-
-        # Send step to environment
-        try:
-            step_body = json.dumps({"response": agent_response}).encode()
-            req = urllib.request.Request(
-                f"{SERVER_URL}/step",
-                data=step_body,
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                step_data = json.loads(resp.read())
-        except Exception as e:
-            print(f"  [ERROR] Step failed: {e}")
-            break
-
-        step_obs = step_data.get("observation", step_data)
-        reward = step_data.get("reward", 0.0) or 0.0
-        done = step_data.get("done", False)
-
-        rule_score = step_obs.get("rule_score", 0.0) or 0.0
-        llm_score = step_obs.get("llm_score", 0.0) or 0.0
-        next_customer_msg = step_obs.get("customer_message", "")
-        is_resolved = step_obs.get("is_resolved", False)
-
-        rule_scores.append(rule_score)
-        llm_scores.append(llm_score)
-
-        print(f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | LLM: {llm_score:.3f} | Resolved: {is_resolved}")
-
-        if not done and next_customer_msg:
-            print(f"  👤 Customer: {next_customer_msg}")
-            # Update conversation history for LLM context
-            conversation_history = step_obs.get("conversation_history", conversation_history)
-            if not conversation_history or conversation_history[-1]["content"] != next_customer_msg:
-                conversation_history.append({"role": "user", "content": next_customer_msg})
-
-        results["step_logs"].append({
-            "step": step,
-            "agent_response": agent_response[:80] + "...",
-            "reward": reward,
-            "rule_score": rule_score,
-            "llm_score": llm_score,
-            "resolved": is_resolved,
-        })
-
-        if done:
-            results["resolved"] = is_resolved
-            print(f"\n  ✅ Episode ended at step {step} | Resolved: {is_resolved}")
-            break
-
-    # --- SUMMARY ---
-    results["steps"] = step
-    results["total_reward"] = sum(log["reward"] for log in results["step_logs"])
-    results["avg_reward"] = results["total_reward"] / step if step > 0 else 0.0
-    results["avg_rule_score"] = sum(rule_scores) / len(rule_scores) if rule_scores else 0.0
-    results["avg_llm_score"] = sum(llm_scores) / len(llm_scores) if llm_scores else 0.0
+        print(f"  [ERROR] Client session failed: {e}")
 
     return results
+
 
 
 # ---------------------------------------------------------------------------
