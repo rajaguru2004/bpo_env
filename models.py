@@ -4,8 +4,8 @@ Data models for the BPO Customer Support Environment.
 The bpo_env environment simulates real-world customer support conversations
 where an LLM agent acts as a customer support executive.
 
-Version 2: Extended with stateful multi-step fields — stage, mood,
-issue_status, intent, and hints.
+Version 4: Flexible multi-intent state machine — multi-intent detection,
+partial credit rewards, recovery mechanism, hybrid LLM/rule grader.
 """
 
 from typing import Any, Dict, List, Optional
@@ -58,7 +58,7 @@ class CustomerSupportObservation(Observation):
     max_steps: int = Field(default=10, description="Maximum steps allowed for this episode")
     is_resolved: bool = Field(default=False, description="Whether the customer issue has been resolved")
 
-    # ── State machine fields (NEW) ─────────────────────────────────────────
+    # ── State machine fields ───────────────────────────────────────────────
     conversation_stage: str = Field(
         default="start",
         description="Current stage of the conversation (start,empathy,diagnosis,resolution,closure)",
@@ -73,31 +73,69 @@ class CustomerSupportObservation(Observation):
     )
     intent_detected: str = Field(
         default="",
-        description="Classified intent of the agent's last response",
+        description="Primary classified intent of the agent's last response (first match, backwards-compat)",
+    )
+    intents_detected: List[str] = Field(
+        default_factory=list,
+        description="All intents detected in the agent's last response (multi-intent v4)",
     )
     hints: List[str] = Field(
         default_factory=list,
         description="Optional guidance hints (populated on easy tasks to aid learning)",
     )
 
+    # ── State machine diagnostics ──────────────────────────────────────────
+    success: bool = Field(
+        default=False,
+        description="True if episode resolved AND closure reached (or mood-based success)",
+    )
+    repetition_count: int = Field(
+        default=0,
+        description="Consecutive repeated responses detected this episode",
+    )
+    stall_count: int = Field(
+        default=0,
+        description="Steps spent in the current stage without advancing",
+    )
+    failure_reason: str = Field(
+        default="",
+        description="Human-readable reason for episode failure (if done and not success)",
+    )
+
     # ── Reward components ──────────────────────────────────────────────────
     rule_score: float = Field(
         default=0.0,
-        description="Rule-based component of reward (0.0–1.0)",
+        description="Rule-based step quality score normalized to [0,1]",
     )
     llm_score: float = Field(
         default=0.0,
-        description="LLM judge component of reward (0.0–1.0, only at episode end)",
+        description="LLM judge score [0,1] — blended into final grader (0.85*rule + 0.15*llm)",
     )
     stage_reward: float = Field(
         default=0.0,
-        description="Bonus reward for advancing conversation stage",
+        description="Bonus reward for advancing conversation stage (+0.3)",
     )
     final_reward: float = Field(
         default=0.0,
-        description="Combined final reward (0.0–1.0)",
+        description="Combined final reward for last step (deterministic step + terminal)",
     )
     grader_score: float = Field(
         default=0.0,
-        description="Deterministic grader score (0.0–1.0), populated only at done=True",
+        description="Hybrid grader score (0.0–1.0), populated only at done=True",
     )
+
+    # ── Base fields for framework compatibility ───────────────────────────
+    done: bool = Field(
+        default=False,
+        description="Whether the episode is finished",
+    )
+    reward: float = Field(
+        default=0.0,
+        description="The latest step's reward",
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary per-step metadata",
+    )
+
+    model_config = {"extra": "allow"}

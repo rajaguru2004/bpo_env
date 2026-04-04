@@ -1,24 +1,28 @@
 """
-Customer Support Environment Implementation — v2 (Multi-Step Stateful).
+Customer Support Environment Implementation — v4 (Flexible Multi-Intent).
 
 Simulates real-world customer support conversations with:
-  - Stage-machine driven conversation flow (start → ... → closure)
-  - Customer mood state (angry / neutral / satisfied) that evolves each step
-  - Deterministic intent classification (zero LLM cost per step)
-  - Dense intermediate rewards (stage advance, empathy, resolution quality)
-  - LLM judge called ONCE per episode (end only)
-  - Deterministic grader producing a final 0.0–1.0 episode score
+  - Multi-intent classification: a single response can carry multiple intents
+  - Flexible stage transitions: any matching intent advances the stage
+  - Stage-skip: strong resolution-oriented responses can skip minor stages
+  - Partial credit rewards: graded rewards instead of binary pass/fail
+  - Recovery mechanism: good step after bad step gets recovery bonus (+0.2)
+  - Relaxed failure conditions: higher thresholds before termination
+  - Hybrid grader: 0.85 * rule_score + 0.15 * llm_score
+  - Deterministic step rewards (no LLM per step)
+  - LLM judge called ONCE per episode for metadata + grader blend
 
 Agent (LLM) acts as a customer support executive.
 Three difficulty levels: easy / medium / hard.
 """
 
+import hashlib
 import json
 import os
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 # ---------------------------------------------------------------------------
@@ -53,213 +57,369 @@ except ImportError:
 
 
 # ===========================================================================
-# INTENT CLASSIFICATION (deterministic, zero LLM cost)
+# MULTI-INTENT CLASSIFICATION (v4 — returns ALL matching intents)
 # ===========================================================================
 
+# Short-trigger keywords allow broad matching even in natural LLM prose.
+# Each entry is (intent_label, list_of_trigger_phrases).
+# Phrases are matched case-insensitively as substrings.
 _INTENT_KEYWORDS: Dict[str, List[str]] = {
+    # ── Greeting / Acknowledgment ─────────────────────────────────────────
+    "greeting": [
+        "hello", "hi there", "good morning", "good afternoon", "good evening",
+        "welcome", "how can i help", "how may i help", "happy to assist",
+        "glad to help", "thank you for reaching out", "thank you for contacting",
+        "thank you for calling", "i'd be happy to help", "i will be happy to help",
+        "i'm here to help", "i am here to help",
+    ],
+    # ── Apology ───────────────────────────────────────────────────────────
     "apology": [
-        "sorry", "apologize", "apologies", "sincerely apologize",
-        "deeply sorry", "regret", "i understand your frustration",
-        "i can see why", "you're right to be",
+        "i sincerely apologize", "i deeply apologize", "i am truly sorry",
+        "i'm truly sorry", "i'm so sorry", "i am so sorry",
+        "i apologize", "my sincerest apologies", "please accept my apologies",
+        "i'm sorry to hear", "i am sorry to hear", "i regret",
+        "we sincerely apologize", "we are sorry", "we're sorry",
+        "deeply sorry", "sincerely sorry", "sorry for", "apologize for",
+        "sorry about", "i'm sorry",
     ],
+    # ── Empathy / De-escalation ───────────────────────────────────────────
     "de_escalation": [
-        "calm", "i hear you", "let me help", "i will personally",
-        "take ownership", "i assure you", "i promise", "rest assured",
-        "i completely understand", "totally understandable", "valid concern",
+        "i completely understand", "i totally understand", "i understand your frustration",
+        "i understand how frustrating", "i hear you", "i can see why",
+        "you're absolutely right", "you are absolutely right",
+        "i take full responsibility", "i take ownership",
+        "i assure you", "rest assured", "i promise",
+        "totally understandable", "valid concern", "i will personally",
+        "let me personally", "i will make sure", "i will ensure",
+        "your concern is valid", "i acknowledge", "understandable",
+        "i understand", "i can imagine", "i can see", "that must be",
+        "i appreciate your patience", "i value your",
     ],
+    # ── Information request / Clarification ──────────────────────────────
     "information_request": [
-        "could you", "can you provide", "may i ask", "do you have",
-        "what is your", "could you share", "please provide",
-        "order number", "email address", "phone number",
+        "could you please provide", "could you provide", "could you share",
+        "can you provide", "can you share", "may i have",
+        "may i ask for", "please share", "please provide",
+        "what is your order", "what is the order number",
+        "order number", "could you confirm your",
+        "can you confirm", "what was the", "could you tell me",
+        "could you clarify", "can you clarify",
+        "please confirm", "could you describe", "can you describe",
+        "could you", "can you give me", "would you mind",
     ],
+    # ── Resolution / Solution offer ───────────────────────────────────────
     "resolution_offer": [
-        "replacement", "replace", "refund", "send a new", "new unit",
-        "ship out", "process your", "arrange", "compensation",
-        "full refund", "credit", "re-send", "dispatch", "issue a",
-        "initiate", "i will process",
+        "i will arrange", "i will process", "i will initiate",
+        "i will send", "i will ship", "i will dispatch",
+        "i'll arrange", "i'll process", "i'll initiate",
+        "i'll send", "i'll ship", "i'll dispatch",
+        "we will arrange", "we will process", "we will send",
+        "replacement", "full refund", "issue a refund",
+        "process your refund", "send a new", "new unit",
+        "arrange a replacement", "arrange a refund",
+        "ship out a new", "re-send", "dispatch a",
+        "credit your account", "compensation",
+        "escalate this to", "connect you with a supervisor",
+        "transfer you to", "pass this to our manager",
+        "speak with a manager", "supervisor will",
+        "i will resolve", "i'll resolve", "let me resolve",
+        "i will fix", "i'll fix", "expedite",
+        "priority shipping", "immediate action",
+        "refund", "replace", "exchange",
     ],
-    "escalation": [
-        "escalate", "supervisor", "manager", "senior team",
-        "transfer you", "connect you with", "pass this to",
-    ],
-    "confirmation": [
-        "confirmed", "done", "completed", "processed",
-        "reference number", "case number", "ticket number",
-        "you will receive", "within 24", "within 48",
-    ],
+    # ── Information provide (order/tracking details) ──────────────────────
     "information_provide": [
-        "order status", "tracking number", "shipped", "on its way",
-        "delivery date", "estimated arrival", "expected", "dispatch",
-        "trk", "order #", "tracking",
+        "tracking number", "tracking id", "trk", "shipment tracking",
+        "order status", "your order has been shipped", "order is shipped",
+        "order has shipped", "on its way", "in transit",
+        "expected delivery", "estimated delivery", "estimated arrival",
+        "delivery date", "dispatch date", "shipped on",
+        "order #", "order number is", "your order",
+        "status of your order", "current status",
+    ],
+    # ── Confirmation / Closure ─────────────────────────────────────────────
+    "confirmation": [
+        "your case number", "your reference number", "reference number",
+        "case number", "ticket number", "case id",
+        "has been confirmed", "has been processed", "has been initiated",
+        "is confirmed", "is processed", "is completed",
+        "you will receive a confirmation", "you will receive an email",
+        "within 24 hours", "within 48 hours", "within 3-5 business days",
+        "within 2-3 business days", "business days",
+        "is there anything else", "anything else i can help",
+        "happy to help further", "glad i could assist",
+        "thank you for your patience", "thank you for contacting",
+        "have a wonderful day", "have a great day",
+        "is resolved", "has been resolved", "all set",
+        "you're all set", "you are all set", "take care",
     ],
 }
 
-# Ordered by priority (first match wins)
-_INTENT_PRIORITY = [
-    "apology",
-    "de_escalation",
-    "escalation",
-    "confirmation",
-    "information_provide",
-    "resolution_offer",
-    "information_request",
-]
+
+def classify_intents(response: str) -> List[str]:
+    """
+    Classify all intents present in the agent response using keyword matching.
+
+    Returns a list of matching intent labels (may be empty → ['off_topic']).
+    Order reflects priority (confirmation first, greeting last) but ALL matches
+    are returned, enabling multi-intent stage transitions.
+    """
+    lower = response.lower()
+
+    # Priority order for deduplication in display, but we return ALL matches
+    priority_order = [
+        "confirmation",
+        "resolution_offer",
+        "information_provide",
+        "information_request",
+        "de_escalation",
+        "apology",
+        "greeting",
+    ]
+
+    matched: List[str] = []
+    for intent in priority_order:
+        keywords = _INTENT_KEYWORDS.get(intent, [])
+        if any(kw in lower for kw in keywords):
+            matched.append(intent)
+
+    return matched if matched else ["off_topic"]
 
 
 def classify_intent(response: str) -> str:
     """
-    Classify agent response intent using deterministic keyword matching.
-    Returns one of the keys in _INTENT_KEYWORDS, or 'off_topic'.
-    O(n·k) — fast, no LLM required.
+    Backwards-compatible single-label intent classifier.
+    Returns the highest-priority intent (first element of classify_intents).
     """
-    lower = response.lower()
-    for intent in _INTENT_PRIORITY:
-        if any(kw in lower for kw in _INTENT_KEYWORDS[intent]):
-            return intent
-    return "off_topic"
+    return classify_intents(response)[0]
 
 
 # ===========================================================================
-# RULE-BASED SCORER
+# REPETITION DETECTION (relaxed — Jaccard threshold raised to 0.85)
 # ===========================================================================
 
-POLITE_PHRASES = [
-    "sorry", "apologize", "apologies", "thank you", "thanks", "please",
-    "happy to help", "glad to assist", "understand your concern",
-    "i appreciate", "absolutely", "certainly", "of course", "no problem",
-    "my pleasure", "we value", "i assure you",
-]
-
-RUDE_WORDS = [
-    "shut up", "stupid", "idiot", "useless", "dumb", "ridiculous response",
-    "not my problem", "don't care", "whatever", "deal with it",
-]
+def _response_fingerprint(text: str) -> str:
+    """Normalize and fingerprint a response for repetition detection."""
+    normalized = re.sub(r"\s+", " ", text.lower().strip())
+    return hashlib.md5(normalized.encode()).hexdigest()
 
 
-def _rule_based_score(
+def _jaccard_similarity(a: str, b: str) -> float:
+    """Compute word-level Jaccard similarity between two strings."""
+    set_a = set(a.lower().split())
+    set_b = set(b.lower().split())
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
+def _is_repetitive(
     response: str,
-    conversation_history: List[Dict[str, str]],
-) -> float:
+    intents: List[str],
+    prev_intents: List[List[str]],
+    prev_responses: List[str],
+    prev_fingerprints: List[str],
+) -> Tuple[bool, str]:
     """
-    Evaluate quality of agent response via deterministic rules.
-    Returns score in [0.0, 1.0].
+    Return (is_repetitive, reason).
+
+    Detects:
+    - Exact fingerprint match (same normalized text)
+    - Near-identical response (Jaccard similarity > 0.85) in last 2 responses
+    - Same intents AND near-identical text (combined check)
+
+    NOTE: Same intent alone is no longer flagged as repetitive.
+    The agent may need to apologize twice but with different content.
     """
-    score = 0.5  # neutral base
+    current_fp = _response_fingerprint(response)
 
-    lower = response.lower()
+    # Exact fingerprint match against last 3 responses
+    if current_fp in prev_fingerprints[-3:]:
+        return True, "exact_repeat"
 
-    if any(phrase in lower for phrase in POLITE_PHRASES):
-        score += 0.2
+    # Near-identical text (Jaccard > 0.85) against last 2 responses
+    for prev_resp in prev_responses[-2:]:
+        if _jaccard_similarity(response, prev_resp) > 0.85:
+            return True, "near_identical_text"
 
-    if any(word in lower for word in RUDE_WORDS):
-        score -= 0.3
-
-    if len(response.strip()) < 20:
-        score -= 0.2
-
-    # Penalize verbatim repetition of last agent turn
-    agent_turns = [m["content"] for m in conversation_history if m["role"] == "assistant"]
-    if agent_turns and response.strip() == agent_turns[-1].strip():
-        score -= 0.1
-
-    return min(1.0, max(0.0, score))
+    return False, ""
 
 
 # ===========================================================================
-# STAGE MACHINES (per task)
+# STAGE DEFINITIONS (relaxed — broader accepted_intents, higher max_stall)
 # ===========================================================================
-
-# Each task defines an ordered list of stage names.
-# The stage machine advances when the agent's intent matches the
-# "expected_intents" for the current stage.
 
 TASK_STAGES: Dict[str, List[Dict[str, Any]]] = {
     "order_status": [
         {
             "name": "start",
-            "expected_intents": {"apology", "information_request", "information_provide"},
-            "hint": "Acknowledge the customer's concern and provide order status.",
+            "accepted_intents": {
+                "greeting", "apology", "information_provide",
+                "information_request", "de_escalation",
+            },
+            "advance_intents": {
+                "greeting", "apology", "information_provide", "information_request",
+            },
+            "hint": "Greet the customer and acknowledge their order inquiry.",
+            "max_stall": 2,
         },
         {
             "name": "inquiry",
-            "expected_intents": {"information_provide", "confirmation"},
-            "hint": "Provide the tracking number and expected delivery date.",
+            "accepted_intents": {"information_provide", "information_request", "confirmation"},
+            "advance_intents": {"information_provide"},
+            "hint": "Provide the tracking number and current order status.",
+            "max_stall": 2,
         },
         {
             "name": "resolution",
-            "expected_intents": {"resolution_offer", "confirmation", "information_provide"},
-            "hint": "Confirm resolution and ask if anything else is needed.",
+            "accepted_intents": {"confirmation", "information_provide", "resolution_offer"},
+            "advance_intents": {"confirmation", "information_provide"},
+            "hint": "Confirm the expected delivery date and next steps.",
+            "max_stall": 2,
         },
         {
             "name": "closure",
-            "expected_intents": {"confirmation", "apology"},
+            "accepted_intents": {"confirmation", "de_escalation", "greeting"},
+            "advance_intents": {"confirmation"},
             "hint": "Close the conversation professionally.",
+            "max_stall": 2,
         },
     ],
     "damaged_product": [
         {
             "name": "start",
-            "expected_intents": {"apology"},
-            "hint": "Immediately apologize for the damaged product.",
+            # Broader: greeting + apology is realistic; de_escalation also accepted
+            "accepted_intents": {"apology", "greeting", "de_escalation", "information_request"},
+            "advance_intents": {"apology", "de_escalation"},
+            "hint": None,
+            "max_stall": 2,
         },
         {
             "name": "empathy",
-            "expected_intents": {"apology", "de_escalation", "information_request"},
-            "hint": "Show empathy and ask for order details to process replacement.",
+            "accepted_intents": {
+                "apology", "de_escalation", "resolution_offer", "information_request",
+            },
+            "advance_intents": {"de_escalation", "resolution_offer", "information_request"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "diagnosis",
-            "expected_intents": {"information_request", "resolution_offer"},
-            "hint": "Confirm the issue and offer a replacement or refund.",
+            "accepted_intents": {
+                "information_request", "de_escalation", "resolution_offer",
+            },
+            "advance_intents": {"information_request", "resolution_offer"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "resolution",
-            "expected_intents": {"resolution_offer", "escalation"},
-            "hint": "Commit to replacement/refund with a timeline.",
+            "accepted_intents": {"resolution_offer", "confirmation", "information_provide"},
+            "advance_intents": {"resolution_offer", "confirmation"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "closure",
-            "expected_intents": {"confirmation", "apology"},
-            "hint": "Provide a reference number and close professionally.",
+            "accepted_intents": {"confirmation", "de_escalation", "greeting"},
+            "advance_intents": {"confirmation"},
+            "hint": None,
+            "max_stall": 2,
         },
     ],
     "escalation": [
         {
             "name": "start",
-            "expected_intents": {"apology", "de_escalation"},
-            "hint": "De-escalate immediately — the customer is very angry.",
+            "accepted_intents": {
+                "apology", "de_escalation", "greeting", "resolution_offer",
+            },
+            "advance_intents": {"apology", "de_escalation", "resolution_offer"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "de_escalation",
-            "expected_intents": {"apology", "de_escalation"},
-            "hint": "Keep de-escalating and acknowledge every grievance.",
+            "accepted_intents": {
+                "de_escalation", "apology", "resolution_offer", "information_request",
+            },
+            "advance_intents": {"de_escalation", "resolution_offer"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "acknowledgement",
-            "expected_intents": {"resolution_offer", "escalation", "de_escalation"},
-            "hint": "Commit to resolution and offer escalation to a manager.",
+            "accepted_intents": {
+                "resolution_offer", "de_escalation", "information_provide",
+            },
+            "advance_intents": {"resolution_offer"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "resolution",
-            "expected_intents": {"resolution_offer", "escalation", "confirmation"},
-            "hint": "Process the refund and connect with supervisor.",
+            "accepted_intents": {
+                "resolution_offer", "confirmation", "information_provide",
+            },
+            "advance_intents": {"resolution_offer", "confirmation"},
+            "hint": None,
+            "max_stall": 3,
         },
         {
             "name": "closure",
-            "expected_intents": {"confirmation"},
-            "hint": "Confirm all actions taken and thank the customer.",
+            "accepted_intents": {"confirmation", "de_escalation", "greeting"},
+            "advance_intents": {"confirmation"},
+            "hint": None,
+            "max_stall": 3,
         },
     ],
 }
+
+# Stage-skip map: if any of these intents appear, jump directly to target_stage
+# regardless of current stage (only if current stage index < target_stage index)
+STAGE_SKIP_RULES: List[Dict[str, Any]] = [
+    {
+        "trigger_intents": {"resolution_offer"},
+        "target_stage": "resolution",
+        "tasks": {"damaged_product", "escalation"},
+        "min_stage_idx": 1,  # must have progressed past start
+    },
+    {
+        "trigger_intents": {"confirmation"},
+        "target_stage": "closure",
+        "tasks": {"order_status", "damaged_product", "escalation"},
+        "min_stage_idx": 2,  # must be at least past diagnosis/empathy
+    },
+]
+
+
+def _get_skip_target(
+    task_name: str,
+    intents: Set[str],
+    current_stage_idx: int,
+    stages: List[Dict[str, Any]],
+) -> Optional[int]:
+    """
+    Return the new stage index if a skip rule applies, else None.
+    Only skips forward; never moves backward.
+    """
+    stage_names = [s["name"] for s in stages]
+    for rule in STAGE_SKIP_RULES:
+        if task_name not in rule["tasks"]:
+            continue
+        if current_stage_idx < rule["min_stage_idx"]:
+            continue
+        if rule["trigger_intents"] & intents:
+            target_name = rule["target_stage"]
+            if target_name in stage_names:
+                target_idx = stage_names.index(target_name)
+                if target_idx > current_stage_idx:
+                    return target_idx
+    return None
 
 
 # ===========================================================================
 # CUSTOMER SCRIPTS (deterministic, stage × mood)
 # ===========================================================================
-
-# Structure: CUSTOMER_SCRIPTS[task_name][stage_name][mood] → List[str]
-# The environment picks the next message based on stage + mood.
-# Multiple variants per combo → cycling through index for determinism.
 
 CUSTOMER_SCRIPTS: Dict[str, Dict[str, Dict[str, List[str]]]] = {
     "order_status": {
@@ -366,11 +526,9 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "tracking_number": "TRK987654321",
             "expected_delivery": "2026-04-03",
         },
-        "success_intents": {"resolution_offer", "information_provide", "confirmation"},
-        "failure_conditions": {
-            "consecutive_failures": 3,
-        },
-        "provide_hints": True,  # Easy task — hints enabled
+        "provide_hints": True,
+        "max_consecutive_failures": 4,    # relaxed from 3
+        "max_consecutive_repetitions": 3, # relaxed from 2
     },
     "damaged_product": {
         "difficulty": "medium",
@@ -382,12 +540,10 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "product": "Bluetooth Speaker",
             "issue": "Damaged on arrival",
         },
-        "success_intents": {"resolution_offer"},
-        "failure_conditions": {
-            "consecutive_failures": 3,
-            "no_apology_by_step": 2,  # must apology within 2 steps
-        },
         "provide_hints": False,
+        "max_consecutive_failures": 4,
+        "max_consecutive_repetitions": 3,
+        "no_apology_by_step": 3,         # relaxed from 2 — must apologize within 3 steps
     },
     "escalation": {
         "difficulty": "hard",
@@ -403,17 +559,15 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "days_delayed": 14,
             "prior_contacts": 3,
         },
-        "success_intents": {"resolution_offer", "escalation"},
-        "failure_conditions": {
-            "consecutive_failures": 3,
-        },
         "provide_hints": False,
+        "max_consecutive_failures": 4,
+        "max_consecutive_repetitions": 3,
     },
 }
 
 
 # ===========================================================================
-# LLM JUDGE (called once at episode end)
+# LLM JUDGE (called ONCE per episode — contributes to grader hybrid score)
 # ===========================================================================
 
 def _llm_judge_score(
@@ -423,7 +577,8 @@ def _llm_judge_score(
 ) -> float:
     """
     Call LLM via OpenRouter to evaluate the entire episode quality.
-    Called ONCE per episode (not per step). Falls back to 0.5 on error.
+    Called ONCE per episode (not per step). Returns normalized [0,1] score.
+    Falls back to 0.0 on any error (grader then uses pure rule score).
     """
     try:
         from openai import OpenAI
@@ -433,11 +588,10 @@ def _llm_judge_score(
         model_name = os.getenv("MODEL_NAME")
 
         if not all([llm_base_url, api_key, model_name]):
-            return 0.5
+            return 0.0
 
         client = OpenAI(base_url=llm_base_url, api_key=api_key)
 
-        # Summarize last 6 turns for brevity
         convo_str = "\n".join(
             f"{m['role'].upper()}: {m['content']}"
             for m in conversation_history[-6:]
@@ -450,7 +604,7 @@ Task: {task_description}
 Conversation Summary (last 6 turns):
 {convo_str}
 
-Rate the agent's OVERALL performance in this episode on three criteria (0–10 each):
+Rate the agent's OVERALL performance (0–10 each):
 1. Helpfulness: Did the agent resolve the customer's issue?
 2. Empathy: Was the agent professional and empathetic throughout?
 3. Efficiency: Did the agent resolve the issue without unnecessary delays?
@@ -482,28 +636,45 @@ Respond ONLY with valid JSON:
             ) / 3.0
             return min(1.0, max(0.0, avg / 10.0))
 
-        return 0.5
+        return 0.0
     except Exception:
-        return 0.5
+        return 0.0
 
 
 # ===========================================================================
-# EPISODE STATE (internal dataclass — not exposed to OpenEnv directly)
+# EPISODE STATE
 # ===========================================================================
 
 @dataclass
 class EpisodeState:
     task_name: str
-    stages: List[Dict[str, Any]]          # full stage list from TASK_STAGES
-    stage_index: int = 0                   # current position in stage list
+    stages: List[Dict[str, Any]]            # full stage list from TASK_STAGES
+    stage_index: int = 0                     # current position in stage list
     customer_mood: str = "neutral"
-    issue_status: str = "unresolved"       # unresolved | in_progress | resolved
+    issue_status: str = "unresolved"         # unresolved | in_progress | resolved
     steps_taken: int = 0
     max_steps: int = 10
-    consecutive_failures: int = 0
+    # Failure counters (relaxed limits)
+    consecutive_failures: int = 0           # wrong-intent steps in a row
+    consecutive_repetitions: int = 0        # repeated response steps
+    stall_steps: int = 0                    # steps without advancing current stage
+    # Resolution tracking
     resolved: bool = False
     had_apology: bool = False
+    closure_reached: bool = False
+    # Recovery tracking
+    prev_step_was_wrong: bool = False       # enables recovery bonus next step
+    # History for repetition detection
+    intent_history: List[List[str]] = field(default_factory=list)  # list of intent lists
+    response_history: List[str] = field(default_factory=list)       # raw response texts
+    response_fingerprints: List[str] = field(default_factory=list)
+    # Trajectory for grader
     trajectory: List[Dict[str, Any]] = field(default_factory=list)
+    # Failure reason
+    failure_reason: str = ""
+    # Limits (loaded from task config)
+    max_consecutive_failures: int = 4
+    max_consecutive_repetitions: int = 3
 
     @property
     def current_stage(self) -> Dict[str, Any]:
@@ -515,52 +686,123 @@ class EpisodeState:
         return self.current_stage["name"]
 
     @property
+    def at_final_stage(self) -> bool:
+        return self.stage_index >= len(self.stages) - 1
+
+    @property
     def done(self) -> bool:
-        return self.resolved or self.consecutive_failures >= 3 or self.steps_taken >= self.max_steps
+        return (
+            self.resolved
+            or self.consecutive_failures >= self.max_consecutive_failures
+            or self.consecutive_repetitions >= self.max_consecutive_repetitions
+            or self.steps_taken >= self.max_steps
+        )
 
 
 # ===========================================================================
-# DENSE REWARD COMPUTATION
+# REWARD COMPUTATION
 # ===========================================================================
+
+# Step reward constants (v4 — reduced extremes, added partial tiers)
+_R_CORRECT_ACTION  = +0.5   # response fully matches accepted_intents
+_R_PARTIAL_ACTION  = +0.3   # some intents match (partial coverage)
+_R_HELPFUL_ACTION  = +0.1   # off-stage but contextually helpful
+_R_STAGE_ADVANCE   = +0.3   # triggered a stage transition
+_R_RECOVERY_BONUS  = +0.2   # recovered from a wrong step
+_R_WRONG_ACTION    = -0.3   # no intent matches accepted (was -0.4)
+_R_REPETITION      = -0.5   # repeated response (unchanged)
+_R_STALL           = -0.2   # stuck in stage too long (was -0.3)
+_R_OFF_TOPIC       = -0.3   # no keywords detected (was -0.4)
+
+# Terminal reward constants
+_R_SUCCESS         = +1.0   # resolved AND closure reached
+_R_PARTIAL_RESOLVE = +0.2   # resolved but no closure (was -0.5 — now positive!)
+_R_FAILURE         = -0.5   # not resolved at episode end (was -1.0)
+_R_NO_APOLOGY      = -0.3   # damaged_product: no apology — applied once at end (was -0.5)
+
 
 def _compute_step_reward(
-    intent: str,
-    rule_score: float,
+    intents: List[str],
+    intents_set: Set[str],
+    accepted_intents: Set[str],
     stage_advanced: bool,
-    episode_state: EpisodeState,
-    task: Dict[str, Any],
-    is_final_step: bool,
-) -> float:
+    is_repetitive: bool,
+    is_stalling: bool,
+    prev_step_was_wrong: bool,
+) -> Tuple[float, float]:
     """
-    Compute a dense reward for a single step.
-    Combines base score, stage advance bonus, rule quality, and penalties.
+    Compute step reward with partial credit and recovery.
+    Returns (step_reward, rule_score_component [0,1]).
     """
-    reward = rule_score  # base from rule scorer (0.5 neutral)
+    reward = 0.0
 
-    # Stage progression bonus
+    if is_repetitive:
+        reward += _R_REPETITION
+    elif "off_topic" in intents and len(intents) == 1:
+        reward += _R_OFF_TOPIC
+    else:
+        # Count how many detected intents are in the accepted set
+        matching = intents_set & accepted_intents
+        if len(matching) == 0:
+            # No overlap at all — but not off_topic (has some real intent)
+            reward += _R_WRONG_ACTION
+        elif len(matching) >= 2 or (len(intents_set) == 1 and matching):
+            # All (or near-all) intents match
+            reward += _R_CORRECT_ACTION
+        else:
+            # Some intents match (partial)
+            reward += _R_PARTIAL_ACTION
+
+    # Stage advance bonus
     if stage_advanced:
-        reward += 0.30
+        reward += _R_STAGE_ADVANCE
 
-    # Empathy / resolution quality bonus (only on relevant intents)
-    if intent in {"apology", "de_escalation"}:
-        reward += 0.10
-    if intent in {"resolution_offer", "confirmation"}:
-        reward += 0.10
+    # Recovery bonus: good response after a wrong one
+    if prev_step_was_wrong and reward > 0 and not is_repetitive:
+        reward += _R_RECOVERY_BONUS
 
-    # Off-topic penalty
-    if intent == "off_topic":
-        reward -= 0.20
+    # Stall penalty (only if not advancing and not already penalized)
+    if is_stalling and not stage_advanced and reward >= _R_WRONG_ACTION:
+        reward += _R_STALL
 
-    # Efficiency bonus at final step (resolved early)
-    if is_final_step and episode_state.resolved:
-        steps_ratio = episode_state.steps_taken / max(episode_state.max_steps, 1)
-        reward += max(0.0, 0.15 * (1.0 - steps_ratio))
+    # Normalize rule_score to [0,1] for grader quality dimension
+    # Range is roughly [-0.8, +1.0]; shift and scale
+    rule_score = min(1.0, max(0.0, (reward + 1.0) / 2.0))
 
-    return min(1.0, max(0.0, reward))
+    return reward, rule_score
+
+
+def _compute_terminal_reward(
+    episode: "EpisodeState",
+    task: Dict[str, Any],
+) -> Tuple[float, bool, str]:
+    """
+    Compute terminal reward added only at the final step.
+    Returns (terminal_reward, success, failure_reason).
+    """
+    if episode.resolved and episode.closure_reached:
+        return _R_SUCCESS, True, ""
+
+    if episode.resolved and not episode.closure_reached:
+        # Partial success: resolved but didn't reach formal closure
+        # Now positive to credit the resolution
+        return _R_PARTIAL_RESOLVE, True, ""
+
+    # Not resolved — determine why
+    if episode.consecutive_failures >= episode.max_consecutive_failures:
+        reason = "consecutive_failures"
+    elif episode.consecutive_repetitions >= episode.max_consecutive_repetitions:
+        reason = "repetition_limit"
+    elif episode.steps_taken >= episode.max_steps:
+        reason = "max_steps_exceeded"
+    else:
+        reason = "unresolved"
+
+    return _R_FAILURE, False, reason
 
 
 # ===========================================================================
-# CUSTOMER RESPONSE GENERATION (scripted, deterministic)
+# CUSTOMER RESPONSE GENERATION
 # ===========================================================================
 
 def _get_customer_response(
@@ -569,20 +811,16 @@ def _get_customer_response(
     mood: str,
     script_index: int,
 ) -> str:
-    """
-    Return a scripted customer response for the given stage + mood.
-    Cycles through variants if multiple exist.
-    """
+    """Return a scripted customer response for the given stage + mood."""
     try:
         variants = CUSTOMER_SCRIPTS[task_name][stage_name][mood]
         return variants[script_index % len(variants)]
     except KeyError:
-        # Fallback to neutral
         try:
             variants = CUSTOMER_SCRIPTS[task_name][stage_name]["neutral"]
             return variants[script_index % len(variants)]
         except KeyError:
-            return "I see. Is there anything else you can do for me?"
+            return "Is there anything else you can do for me?"
 
 
 def _get_done_message(resolved: bool, mood: str) -> str:
@@ -592,31 +830,51 @@ def _get_done_message(resolved: bool, mood: str) -> str:
             return "Wonderful! Thank you so much for your help. My issue is fully resolved!"
         elif mood == "neutral":
             return "Thank you for your help. My issue has been resolved."
-        else:  # angry but resolved
+        else:
             return "Fine. I suppose that resolves things. Thank you."
     else:
         return "I'm still not satisfied. I'll need to contact you again or escalate further."
 
 
 # ===========================================================================
-# MOOD EVOLUTION
+# MOOD EVOLUTION (relaxed — accepted intents no longer worsen mood)
 # ===========================================================================
 
-def _evolve_mood(current_mood: str, intent: str, stage_advanced: bool, rule_score: float) -> str:
+def _evolve_mood(
+    current_mood: str,
+    intents: List[str],
+    stage_advanced: bool,
+    stage_accepted: bool,
+) -> str:
     """
     Compute the customer's new mood after the agent's response.
 
     Rules:
-    - Good response (rule_score > 0.65) + stage advanced → mood improves by 1
-    - Bad response (rule_score < 0.35) or off_topic → mood worsens by 1
+    - Stage advance with strong resolution/empathy intent → mood improves
+    - Any stage advance → mood at least holds
+    - Accepted (but not advancing) → mood holds
+    - Not accepted AND off_topic → mood worsens
     """
     mood_ladder = ["angry", "neutral", "satisfied"]
     idx = mood_ladder.index(current_mood)
+    intents_set = set(intents)
 
-    if (rule_score >= 0.65 and stage_advanced) or intent in {"resolution_offer", "confirmation"}:
-        idx = min(idx + 1, 2)
-    elif rule_score < 0.35 or intent == "off_topic":
-        idx = max(idx - 1, 0)
+    if stage_advanced:
+        # Positive intents cause mood to improve more reliably
+        if intents_set & {"resolution_offer", "confirmation", "de_escalation"}:
+            idx = min(idx + 1, 2)
+        else:
+            # Neutral advance — mood holds or slightly improves
+            idx = min(idx + 1, 2)
+    elif stage_accepted:
+        # Accepted but not advancing — mood holds (no change)
+        pass
+    else:
+        # Not accepted
+        if "off_topic" in intents and len(intents) == 1:
+            # Truly off_topic → mood worsens
+            idx = max(idx - 1, 0)
+        # Wrong-but-real-intent: hold mood (don't punish twice)
 
     return mood_ladder[idx]
 
@@ -627,14 +885,16 @@ def _evolve_mood(current_mood: str, intent: str, stage_advanced: bool, rule_scor
 
 class CustomerSupportEnvironment(Environment):
     """
-    Multi-step, stateful Customer Support Resolution Environment (v2).
+    Multi-step, stateful Customer Support Resolution Environment (v4 — Flexible).
 
-    Simulates realistic customer support across 3 difficulty levels with:
-      - Stage machine governance (4–5 stages per task)
-      - Customer mood evolution (angry → neutral → satisfied)
-      - Dense per-step rewards (deterministic)
-      - LLM judge at episode end ONLY (1 call per episode)
-      - Deterministic grader score in [0.0, 1.0]
+    Key improvements over v3:
+    - Multi-intent classification (agent responses carry multiple intents)
+    - Partial credit rewards (graded tiers instead of binary)
+    - Recovery mechanism (bonus for recovering from a wrong step)
+    - Stage-skip for strong responses (skip minor stages)
+    - Relaxed failure thresholds (4 failures, 3 repetitions)
+    - Positive terminal reward for partial resolution
+    - Hybrid grader: 0.85 * rule + 0.15 * llm
     """
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
@@ -645,7 +905,7 @@ class CustomerSupportEnvironment(Environment):
         self._task_name: str = ""
         self._conversation_history: List[Dict[str, str]] = []
         self._episode: Optional[EpisodeState] = None
-        self._script_index: int = 0  # for cycling customer response variants
+        self._script_index: int = 0
 
     # -----------------------------------------------------------------------
     def reset(
@@ -681,6 +941,8 @@ class CustomerSupportEnvironment(Environment):
             issue_status="unresolved",
             steps_taken=0,
             max_steps=self._task["max_steps"],
+            max_consecutive_failures=self._task.get("max_consecutive_failures", 4),
+            max_consecutive_repetitions=self._task.get("max_consecutive_repetitions", 3),
         )
 
         self._state = State(
@@ -688,15 +950,14 @@ class CustomerSupportEnvironment(Environment):
             step_count=0,
         )
 
-        # Initial customer message from stage=start + initial mood
         initial_message = _get_customer_response(
             task_name, "start", initial_mood, script_index=0
         )
         self._conversation_history.append({"role": "user", "content": initial_message})
 
         hints: List[str] = []
-        if self._task.get("provide_hints"):
-            hints = [stages[0].get("hint", "")]
+        if self._task.get("provide_hints") and stages[0].get("hint"):
+            hints = [stages[0]["hint"]]
 
         return CustomerSupportObservation(
             customer_message=initial_message,
@@ -710,6 +971,7 @@ class CustomerSupportEnvironment(Environment):
             customer_mood=initial_mood,
             issue_status="unresolved",
             intent_detected="",
+            intents_detected=[],
             hints=hints,
             rule_score=0.0,
             llm_score=0.0,
@@ -718,13 +980,17 @@ class CustomerSupportEnvironment(Environment):
             grader_score=0.0,
             done=False,
             reward=0.0,
+            success=False,
+            repetition_count=0,
+            stall_count=0,
+            failure_reason="",
             task_context=self._task.get("context"),
         )
 
     # -----------------------------------------------------------------------
     def step(self, action: CustomerSupportAction) -> CustomerSupportObservation:  # type: ignore[override]
         """
-        Process the agent's response and advance the episode state.
+        Process the agent's response and advance the episode state (flexible state machine).
         """
         # Guard: not reset yet
         if self._task is None or self._episode is None:
@@ -737,6 +1003,11 @@ class CustomerSupportEnvironment(Environment):
                 is_resolved=False,
                 done=True,
                 reward=0.0,
+                success=False,
+                repetition_count=0,
+                stall_count=0,
+                failure_reason="not_reset",
+                intents_detected=[],
             )
 
         ep = self._episode
@@ -745,125 +1016,192 @@ class CustomerSupportEnvironment(Environment):
 
         agent_response = action.response
 
-        # Record agent turn
+        # Record agent turn in history
         self._conversation_history.append({"role": "assistant", "content": agent_response})
 
-        # ── 1. CLASSIFY INTENT ─────────────────────────────────────────────
-        intent = classify_intent(agent_response)
+        # ── 1. MULTI-INTENT CLASSIFICATION ──────────────────────────────────
+        intents: List[str] = classify_intents(agent_response)
+        intents_set: Set[str] = set(intents)
+        primary_intent: str = intents[0]  # highest-priority intent for compat
 
-        # ── 2. RULE-BASED SCORE ────────────────────────────────────────────
-        rule_score = _rule_based_score(agent_response, self._conversation_history)
-
-        # ── 3. TRACK APOLOGY ──────────────────────────────────────────────
-        if intent == "apology":
+        # ── 2. TRACK APOLOGY (damaged_product only) ──────────────────────────
+        if "apology" in intents_set and not ep.had_apology:
             ep.had_apology = True
 
-        # ── 4. STAGE MACHINE ADVANCE ───────────────────────────────────────
+        # ── 3. REPETITION DETECTION (relaxed Jaccard 0.85) ───────────────────
+        rep_flag, rep_reason = _is_repetitive(
+            agent_response,
+            intents,
+            ep.intent_history,
+            ep.response_history,
+            ep.response_fingerprints,
+        )
+        if rep_flag:
+            ep.consecutive_repetitions += 1
+        else:
+            ep.consecutive_repetitions = 0
+
+        # Record for next-step detection
+        ep.intent_history.append(intents)
+        ep.response_history.append(agent_response)
+        ep.response_fingerprints.append(_response_fingerprint(agent_response))
+
+        # ── 4. STAGE MACHINE ADVANCE ──────────────────────────────────────────
         current_stage = ep.current_stage
-        expected_intents: set = current_stage["expected_intents"]
+        accepted_intents: Set[str] = current_stage["accepted_intents"]
+        advance_intents: Set[str] = current_stage["advance_intents"]
+        max_stall: int = current_stage.get("max_stall", 2)
+
+        # Multi-intent gate: at least ONE detected intent must be in accepted set
+        stage_accepted = bool(intents_set & accepted_intents)
+        # Advance gate: at least ONE detected intent must be in advance set
+        can_advance = bool(intents_set & advance_intents)
         stage_advanced = False
 
-        if intent in expected_intents and ep.stage_index < len(ep.stages) - 1:
+        # Check stage-skip first (strong responses can skip minor stages)
+        skip_idx = None
+        if not ep.at_final_stage and not rep_flag and can_advance:
+            skip_idx = _get_skip_target(
+                self._task_name, intents_set, ep.stage_index, ep.stages
+            )
+
+        if skip_idx is not None:
+            ep.stage_index = skip_idx
+            stage_advanced = True
+            ep.issue_status = "in_progress"
+            ep.consecutive_failures = 0
+            ep.stall_steps = 0
+        elif can_advance and not ep.at_final_stage and not rep_flag:
             ep.stage_index += 1
             stage_advanced = True
-            ep.consecutive_failures = 0
             ep.issue_status = "in_progress"
-        elif intent == "off_topic" or rule_score < 0.35:
-            ep.consecutive_failures += 1
+            ep.consecutive_failures = 0
+            ep.stall_steps = 0
         else:
-            # Correct-ish but didn't advance stage — partial credit, reset fail streak
-            ep.consecutive_failures = max(0, ep.consecutive_failures - 1)
+            # No advance — update stall and failure counters
+            if not stage_advanced:
+                ep.stall_steps += 1
 
-        # ── 5. RESOLUTION CHECK ────────────────────────────────────────────
-        # Resolved if: in closure stage with right intent, OR success intent
-        # reached at any point AND issue is in_progress (stage advanced at least once)
-        # OR it's a simple task (easy) and a decisive success intent was given.
-        is_final_step = ep.done  # evaluate after updating step count
-        if ep.stage_name == "closure" and intent in ep.stages[-1]["expected_intents"]:
+            if not stage_accepted:
+                ep.consecutive_failures += 1
+            else:
+                # Accepted but didn't advance (e.g. at_final_stage, or no advance intent)
+                ep.consecutive_failures = 0
+
+        # ── 5. STALL DETECTION ───────────────────────────────────────────────
+        is_stalling = ep.stall_steps > max_stall
+
+        # ── 6. RESOLUTION CHECK ──────────────────────────────────────────────
+        # Resolve at final stage with advance intent, OR mood-based resolution
+        if ep.at_final_stage and can_advance and not rep_flag:
             ep.resolved = True
+            ep.closure_reached = True
             ep.issue_status = "resolved"
-        elif (
-            intent in self._task.get("success_intents", set())
-            and (
-                ep.stage_index >= len(ep.stages) - 2  # near final stage
-                or self._task["difficulty"] == "easy"  # easy tasks: allow early resolve
-            )
-        ):
-            ep.resolved = True
-            ep.issue_status = "resolved"
+            ep.customer_mood = _evolve_mood(ep.customer_mood, intents, True, True)
+        else:
+            ep.customer_mood = _evolve_mood(ep.customer_mood, intents, stage_advanced, stage_accepted)
 
-        is_final_step = ep.done  # re-check after resolution update
-
-        # ── 6. MOOD EVOLUTION ──────────────────────────────────────────────
-        ep.customer_mood = _evolve_mood(ep.customer_mood, intent, stage_advanced, rule_score)
-
-        # ── 7. DENSE REWARD ────────────────────────────────────────────────
-        step_reward = _compute_step_reward(
-            intent=intent,
-            rule_score=rule_score,
+        # ── 7. COMPUTE STEP REWARD (partial credit + recovery) ───────────────
+        step_reward, rule_score = _compute_step_reward(
+            intents=intents,
+            intents_set=intents_set,
+            accepted_intents=accepted_intents,
             stage_advanced=stage_advanced,
-            episode_state=ep,
-            task=self._task,
-            is_final_step=is_final_step,
+            is_repetitive=rep_flag,
+            is_stalling=is_stalling,
+            prev_step_was_wrong=ep.prev_step_was_wrong,
         )
 
-        stage_reward = 0.30 if stage_advanced else 0.0
+        # Track for next-step recovery
+        ep.prev_step_was_wrong = (not stage_accepted and not rep_flag)
 
-        # ── 8. Record step in trajectory FIRST (before grader reads it) ────
+        stage_reward_val = _R_STAGE_ADVANCE if stage_advanced else 0.0
+
+        # ── 8. RECORD TRAJECTORY STEP ─────────────────────────────────────────
         ep.trajectory.append({
-            "step": ep.steps_taken,
-            "intent": intent,
-            "rule_score": rule_score,
-            "stage": ep.stage_name,
+            "step":           ep.steps_taken,
+            "intent":         primary_intent,
+            "intents":        intents,
+            "stage":          ep.stage_name,
+            "stage_accepted": stage_accepted,
             "stage_advanced": stage_advanced,
-            "mood": ep.customer_mood,
-            "reward": step_reward,
+            "is_repetitive":  rep_flag,
+            "is_stalling":    is_stalling,
+            "rule_score":     rule_score,
+            "reward":         step_reward,
+            "mood":           ep.customer_mood,
         })
 
-        # ── 9. LLM JUDGE (once, at episode end) ───────────────────────────
+        # ── 9. CHECK ALL FAILURE / DONE CONDITIONS ────────────────────────────
+        is_final_step = ep.done
+
+        # ── 10. TERMINAL REWARD + GRADER (only at episode end) ────────────────
         llm_score = 0.0
         grader_score = 0.0
+        terminal_reward = 0.0
+        success = False
+        failure_reason = ""
+
+        # Damaged product: no-apology penalty (applied ONCE at final step only)
+        no_apology_penalty = 0.0
+        if (
+            self._task_name == "damaged_product"
+            and is_final_step
+            and ep.steps_taken >= self._task.get("no_apology_by_step", 3)
+            and not ep.had_apology
+        ):
+            no_apology_penalty = _R_NO_APOLOGY
+
         if is_final_step:
+            terminal_reward, success, failure_reason = _compute_terminal_reward(ep, self._task)
+            ep.failure_reason = failure_reason
+
+            # LLM judge — contributes 15% to grader
             llm_score = _llm_judge_score(
                 task_description=self._task["description"],
                 conversation_history=self._conversation_history,
                 final_response=agent_response,
             )
-            # Blend LLM into final step reward
-            step_reward = 0.6 * step_reward + 0.4 * llm_score
-            # Update trajectory with blended final reward
-            ep.trajectory[-1]["reward"] = step_reward
 
-            # ── 10. DETERMINISTIC GRADER (reads trajectory already populated) ─
+            # Update final step in trajectory with terminal reward and no-apology penalty
+            ep.trajectory[-1]["reward"] = step_reward + terminal_reward + no_apology_penalty
+
+            # Hybrid grader (0.85 rule + 0.15 llm)
             grader_score = grade_episode(
                 trajectory=ep.trajectory,
                 final_stage=ep.stage_name,
                 final_mood=ep.customer_mood,
                 resolved=ep.resolved,
+                closure_reached=ep.closure_reached,
                 steps_taken=ep.steps_taken,
                 max_steps=ep.max_steps,
+                step_rewards=[t["reward"] for t in ep.trajectory],
+                llm_score=llm_score,
             )
 
-        # ── 10. NEXT CUSTOMER MESSAGE ──────────────────────────────────────
+        # Final reward = step reward + terminal reward + penalties (at end only)
+        total_step_reward = (
+            step_reward
+            + (terminal_reward if is_final_step else 0.0)
+            + (no_apology_penalty if is_final_step else 0.0)
+        )
+
+        # ── 11. NEXT CUSTOMER MESSAGE ──────────────────────────────────────────
         self._script_index += 1
         if is_final_step:
             next_message = _get_done_message(ep.resolved, ep.customer_mood)
         else:
-            # Use the NEW stage after potential advance
-            next_stage_name = ep.stage_name
             next_message = _get_customer_response(
-                self._task_name, next_stage_name, ep.customer_mood, self._script_index
+                self._task_name, ep.stage_name, ep.customer_mood, self._script_index
             )
-
-        if not is_final_step:
             self._conversation_history.append({"role": "user", "content": next_message})
 
-        # ── 11. HINTS (easy task only) ─────────────────────────────────────
+        # ── 12. HINTS (easy task only, not at final step) ─────────────────────
         hints: List[str] = []
         if self._task.get("provide_hints") and not is_final_step:
-            next_stage_info = ep.current_stage
-            if "hint" in next_stage_info:
-                hints = [next_stage_info["hint"]]
+            hint_text = ep.current_stage.get("hint")
+            if hint_text:
+                hints = [hint_text]
 
         return CustomerSupportObservation(
             customer_message=next_message,
@@ -876,15 +1214,20 @@ class CustomerSupportEnvironment(Environment):
             conversation_stage=ep.stage_name,
             customer_mood=ep.customer_mood,
             issue_status=ep.issue_status,
-            intent_detected=intent,
+            intent_detected=primary_intent,
+            intents_detected=intents,
             hints=hints,
             rule_score=rule_score,
             llm_score=llm_score,
-            stage_reward=stage_reward,
-            final_reward=step_reward,
+            stage_reward=stage_reward_val,
+            final_reward=total_step_reward,
             grader_score=grader_score,
             done=is_final_step,
-            reward=step_reward,
+            reward=total_step_reward,
+            success=success,
+            repetition_count=ep.consecutive_repetitions,
+            stall_count=ep.stall_steps,
+            failure_reason=failure_reason if is_final_step else "",
             task_context=self._task.get("context"),
         )
 

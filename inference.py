@@ -48,8 +48,7 @@ BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "bpo_env")
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 APP_ENV = os.getenv("APP_ENV", "prod")  # 'prod' for benchmarks, 'test' for verbose multi-tasking
 
-# Score calculation metrics
-SUCCESS_SCORE_THRESHOLD = 0.1
+# Score calculation metrics — success requires genuine resolution, not just threshold
 MAX_STEPS_DEFAULT = 10
 
 # Task names to run in test mode
@@ -106,12 +105,14 @@ def log_end(
     avg_llm: float,
     rewards: List[float],
     grader_score: float = 0.0,
+    failure_reason: str = "",
 ) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
     print(
         f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
         f"rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} "
-        f"grader_score={grader_score:.3f} rewards={rewards_str}",
+        f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}",
         flush=True,
     )
 
@@ -255,6 +256,9 @@ def run_task(task_name: str) -> Dict[str, Any]:
         "grader_score": 0.0,
         "final_stage": "",
         "final_mood": "",
+        "failure_reason": "",
+        "repetition_count": 0,
+        "stall_count": 0,
     }
 
     if APP_ENV == "test":
@@ -316,27 +320,39 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     done = result.done
                     error = None
 
-                    # New state machine fields
+                    # State machine fields
                     stage = getattr(step_obs, "conversation_stage", "")
                     mood = getattr(step_obs, "customer_mood", "")
                     intent = getattr(step_obs, "intent_detected", "")
                     grader_score = getattr(step_obs, "grader_score", 0.0)
+                    rep_count = getattr(step_obs, "repetition_count", 0)
+                    stall_count = getattr(step_obs, "stall_count", 0)
+                    failure_reason = getattr(step_obs, "failure_reason", "")
 
                     if done:
                         results["grader_score"] = grader_score
                         results["final_stage"] = stage
                         results["final_mood"] = mood
+                        results["failure_reason"] = failure_reason
+                        results["repetition_count"] = rep_count
+                        results["stall_count"] = stall_count
 
                     if APP_ENV == "test":
+                        rep_str = f" ⚠️ REP={rep_count}" if rep_count > 0 else ""
+                        stall_str = f" 🛑 STALL={stall_count}" if stall_count > 0 else ""
                         print(
                             f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | "
-                            f"LLM: {llm_score:.3f} | Stage: {stage} | "
-                            f"Mood: {mood} | Intent: {intent} | Resolved: {step_obs.is_resolved}"
+                            f"Stage: {stage} | Mood: {mood} | Intent: {intent}"
+                            f"{rep_str}{stall_str} | Resolved: {step_obs.is_resolved}"
                         )
                         if not done and step_obs.customer_message:
                             print(f"  👤 Customer: {step_obs.customer_message}")
-                        if done and grader_score > 0:
-                            print(f"  🏆 Grader Score: {grader_score:.3f}")
+                        if done:
+                            # success field may not propagate via client — fall back to is_resolved
+                            is_success = getattr(step_obs, 'success', False) or getattr(step_obs, 'is_resolved', False)
+                            success_str = "✅ SUCCESS" if is_success else "❌ FAIL"
+                            print(f"  🏆 Grader: {grader_score:.3f} | {success_str}"
+                                  + (f" | Reason: {failure_reason}" if failure_reason else ""))
 
                     results["rule_scores"].append(rule_score)
                     results["llm_scores"].append(llm_score)
@@ -370,6 +386,7 @@ def run_task(task_name: str) -> Dict[str, Any]:
 
                 if done:
                     results["resolved"] = step_obs.is_resolved if 'step_obs' in locals() else False
+                    results["success"] = getattr(step_obs, 'success', False) if 'step_obs' in locals() else False
                     break
 
             # --- SUMMARY ---
@@ -377,12 +394,15 @@ def run_task(task_name: str) -> Dict[str, Any]:
             results["rewards"] = rewards
             results["total_reward"] = sum(rewards)
             
-            # Correct score calculation (Average Reward of steps taken)
-            results["score"] = sum(rewards) / step if step > 0 else 0.0
-            results["score"] = min(max(results["score"], 0.0), 1.0)
+            # Score = average reward across steps (may be negative for bad episodes)
+            raw_score = sum(rewards) / step if step > 0 else 0.0
+            results["score"] = min(1.0, max(-1.0, raw_score))  # Allow negatives to propagate
             results["avg_rule_score"] = sum(results["rule_scores"]) / len(results["rule_scores"]) if results["rule_scores"] else 0.0
             results["avg_llm_score"] = sum(results["llm_scores"]) / len(results["llm_scores"]) if results["llm_scores"] else 0.0
-            results["success"] = results["resolved"] or (results["score"] >= SUCCESS_SCORE_THRESHOLD)
+            # success requires genuine resolution — not just a score threshold
+            # (already set in loop; only override if never set)
+            if not results["success"]:
+                results["success"] = results["resolved"]
             
     except Exception as e:
         debug_log(f"Client session failed: {e}")
@@ -395,6 +415,7 @@ def run_task(task_name: str) -> Dict[str, Any]:
         avg_llm=results["avg_llm_score"],
         rewards=results["rewards"],
         grader_score=results.get("grader_score", 0.0),
+        failure_reason=results.get("failure_reason", ""),
     )
     return results
 
@@ -445,25 +466,30 @@ def main():
             time.sleep(1)
 
         # Final Report
-        print("\n" + "=" * 80)
+        print("\n" + "=" * 100)
         print("  FINAL RESULTS SUMMARY")
-        print("=" * 80)
-        print(f"  {'Task':<25} {'Steps':>5} {'Score':>8} {'Grader':>7} {'Rule':>7} {'LLM':>7} {'Mood':>9} {'Resolved':>9}")
-        print(f"  {'-'*25} {'-'*5} {'-'*8} {'-'*7} {'-'*7} {'-'*7} {'-'*9} {'-'*9}")
+        print("=" * 100)
+        print(f"  {'Task':<25} {'Steps':>5} {'Score':>8} {'Grader':>7} {'Rule':>7} "
+              f"{'Mood':>9} {'Success':>8} {'Failure Reason':<20}")
+        print(f"  {'-'*25} {'-'*5} {'-'*8} {'-'*7} {'-'*7} "
+              f"{'-'*9} {'-'*8} {'-'*20}")
 
         for r in all_results:
-            resolved_str = "✅ Yes" if r["resolved"] else "❌ No"
+            success_str = "✅ Yes" if r["success"] else "❌ No"
+            fail_str = r.get("failure_reason", "") or "—"
             print(
                 f"  {r['task_name']:<25} {r['steps']:>5} "
                 f"{r['score']:>8.3f} {r.get('grader_score', 0.0):>7.3f} "
-                f"{r['avg_rule_score']:>7.3f} {r['avg_llm_score']:>7.3f} "
-                f"{r.get('final_mood', 'n/a'):>9} {resolved_str:>9}"
+                f"{r['avg_rule_score']:>7.3f} "
+                f"{r.get('final_mood', 'n/a'):>9} {success_str:>8} {fail_str:<20}"
             )
 
         avg_score = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0.0
         avg_grader = sum(r.get("grader_score", 0.0) for r in all_results) / len(all_results) if all_results else 0.0
+        success_count = sum(1 for r in all_results if r["success"])
         print(f"\n  🏆 Overall Average Score:  {avg_score:.3f}")
         print(f"  🎯 Overall Grader Score:   {avg_grader:.3f}")
+        print(f"  ✅ Tasks Succeeded:        {success_count}/{len(all_results)}")
         print("\n  Done! All tasks completed.\n")
     else:
         # Single-task mode (Benchmark style)
