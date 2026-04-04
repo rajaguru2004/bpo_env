@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import time
+import textwrap
 from typing import Any, Dict, List, Optional
 
 # Load environment variables from .env if it exists
@@ -27,7 +28,6 @@ if os.path.exists(env_path):
         from dotenv import load_dotenv
         load_dotenv(env_path)
     except ImportError:
-        # Simple manual fallback for .env loading
         with open(env_path) as f:
             for line in f:
                 if "=" in line and not line.startswith("#"):
@@ -35,20 +35,61 @@ if os.path.exists(env_path):
                     os.environ[name.strip()] = value.strip().strip('"').strip("'")
 
 # ---------------------------------------------------------------------------
-# LLM Client Setup
+# Constants & Mandatory Benchmark Variables
 # ---------------------------------------------------------------------------
-
 from openai import OpenAI
 
-LLM_BASEURL = os.getenv("LLM_BASEURL", "https://openrouter.ai/api/v1")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# Required by the Benchmark runner
+API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("LLM_BASEURL") or "https://openrouter.ai/api/v1"
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY", "")
 MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3-super-120b-a12b:free")
+TASK_NAME = os.getenv("MY_ENV_V4_TASK", "order_status")
+BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "bpo_env")
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
+APP_ENV = os.getenv("APP_ENV", "prod")  # 'prod' for benchmarks, 'test' for verbose multi-tasking
+
+# Score calculation metrics
+SUCCESS_SCORE_THRESHOLD = 0.1
+MAX_STEPS_DEFAULT = 10
+
+# Task names to run in test mode
+TASKS_TO_RUN = ["order_status", "damaged_product", "escalation"]
 
 client = OpenAI(
-    base_url=LLM_BASEURL,
-    api_key=OPENAI_API_KEY,
+    base_url=API_BASE_URL,
+    api_key=HF_TOKEN,
 )
+
+# ---------------------------------------------------------------------------
+# Logging Functions (STDOUT Only)
+# ---------------------------------------------------------------------------
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, rule_score: float, llm_score: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    # Normalize action_str to remove newlines for single-line compliance
+    action_clean = action.replace("\n", " ").replace("\r", "")
+    print(
+        f"[STEP] step={step} action={action_clean} reward={reward:.2f} rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, avg_rule: float, avg_llm: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} rewards={rewards_str}", flush=True)
+
+# Helper for descriptive logs
+def debug_log(msg: str) -> None:
+    # If in test mode, print to stdout (old way). If prod, stderr only.
+    if APP_ENV == "test":
+        print(f"   {msg}", flush=True)
+    else:
+        print(f"   [DEBUG] {msg}", file=sys.stderr, flush=True)
 
 # Task names to run
 TASKS_TO_RUN = ["order_status", "damaged_product", "escalation"]
@@ -90,29 +131,22 @@ def call_llm_agent(
     messages.extend(conversation_history)
 
     try:
-        print(f"   [⏳ Calling LLM Agent]: {MODEL_NAME} ...")
+        debug_log(f"Calling LLM Agent: {MODEL_NAME} ...")
         start_time = time.time()
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             max_tokens=300,
             temperature=0.7,
-            extra_body={"reasoning": {"enabled": True}},
         )
         duration = time.time() - start_time
-        print(f"   [✅ LLM Response Received]: {duration:.2f}s")
+        debug_log(f"LLM Response Received: {duration:.2f}s")
 
-        # Preserve reasoning details if present
-        choice = response.choices[0]
-        reasoning = getattr(choice.message, "reasoning_content", None)
-        if reasoning:
-            print(f"   [🧠 Reasoning]: {reasoning[:120]}...")
-
-        content = choice.message.content.strip()
+        content = response.choices[0].message.content.strip()
         return content if content else _fallback_response(conversation_history)
 
     except Exception as e:
-        print(f"   [⚠️  API Error]: {e}")
+        debug_log(f"API Error: {e}")
         return _fallback_response(conversation_history)
 
 
@@ -178,107 +212,119 @@ def run_task(task_name: str) -> Dict[str, Any]:
         "task_name": task_name,
         "steps": 0,
         "total_reward": 0.0,
-        "avg_reward": 0.0,
+        "rewards": [],
+        "rule_scores": [],
+        "llm_scores": [],
+        "resolved": False,
+        "success": False,
+        "score": 0.0,
         "avg_rule_score": 0.0,
         "avg_llm_score": 0.0,
-        "resolved": False,
-        "step_logs": [],
     }
 
-    print(f"\n{'='*65}")
-    print(f"  TASK: {task_name.upper().replace('_', ' ')}")
-    print(f"{'='*65}")
+    if APP_ENV == "test":
+        print(f"\n{'='*65}")
+        print(f"  TASK: {task_name.upper().replace('_', ' ')}")
+        print(f"{'='*65}")
+    else:
+        debug_log(f"Starting task: {task_name}")
 
     # Use the WebSocket client with sync wrapper
     client_env = CustomerSupportEnv(base_url=SERVER_URL).sync()
     
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+
     try:
         with client_env as env:
             # --- RESET ---
             try:
                 result = env.reset(task_name=task_name)
                 obs = result.observation
+                done = result.done
             except Exception as e:
-                print(f"  [ERROR] Reset failed: {e}")
+                debug_log(f"Reset failed: {e}")
+                log_end(success=False, steps=0, score=0.0, avg_rule=0.0, avg_llm=0.0, rewards=[])
                 return results
 
-            customer_message = obs.customer_message
-            task_context = obs.task_context
-            max_steps = obs.max_steps
+            if APP_ENV == "test":
+                print(f"  👤 Customer: {obs.customer_message}\n")
+
             conversation_history = obs.conversation_history
-
-            print(f"\n  📋 Task Context: {task_context}")
-            print(f"  👤 Customer: {customer_message}\n")
-
-            rule_scores = []
-            llm_scores = []
-            done = False
+            task_context = obs.task_context
+            max_steps = obs.max_steps or MAX_STEPS_DEFAULT
+            
+            rewards = []
             step = 0
 
             # --- STEP LOOP ---
             while not done and step < max_steps:
                 step += 1
-                print(f"  --- Step {step}/{max_steps} ---")
-
+                if APP_ENV == "test":
+                    print(f"  --- Step {step}/{max_steps} ---")
+                
                 # Agent generates response
                 agent_response = call_llm_agent(conversation_history, task_context)
-                print(f"  🤖 Agent: {agent_response}")
+                if APP_ENV == "test":
+                    print(f"  🤖 Agent: {agent_response}")
 
                 # Send step to environment
                 try:
                     from models import CustomerSupportAction
                     action = CustomerSupportAction(response=agent_response)
                     
-                    print(f"   [📡 Sending action to server] ...")
                     result = env.step(action)
-                    print(f"   [📥 Received response]: reward={result.reward:.3f}, done={result.done}")
                     
                     step_obs = result.observation
                     reward = result.reward or 0.0
+                    rule_score = getattr(step_obs, "rule_score", 0.0)
+                    llm_score = getattr(step_obs, "llm_score", 0.0)
                     done = result.done
+                    error = None
+                    
+                    if APP_ENV == "test":
+                        print(f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | LLM: {llm_score:.3f} | Resolved: {step_obs.is_resolved}")
+                        if not done and step_obs.customer_message:
+                            print(f"  👤 Customer: {step_obs.customer_message}")
+
+                    results["rule_scores"].append(rule_score)
+                    results["llm_scores"].append(llm_score)
+
                 except Exception as e:
-                    print(f"  [ERROR] Step failed: {e}")
-                    break
+                    debug_log(f"Step failed: {e}")
+                    error = str(e)
+                    reward = 0.0
+                    done = True
 
-                rule_score = getattr(step_obs, "rule_score", 0.0)
-                llm_score = getattr(step_obs, "llm_score", 0.0)
-                next_customer_msg = step_obs.customer_message
-                is_resolved = step_obs.is_resolved
+                rewards.append(reward)
+                results["rule_scores"].append(rule_score)
+                results["llm_scores"].append(llm_score)
 
-                rule_scores.append(rule_score)
-                llm_scores.append(llm_score)
+                log_step(step=step, action=agent_response, reward=reward, rule_score=rule_score, llm_score=llm_score, done=done, error=error)
 
-                print(f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | LLM: {llm_score:.3f} | Resolved: {is_resolved}")
-
-                if not done and next_customer_msg:
-                    print(f"  👤 Customer: {next_customer_msg}")
-                    # Update conversation history for LLM context
+                if not done:
                     conversation_history = step_obs.conversation_history
 
-                results["step_logs"].append({
-                    "step": step,
-                    "agent_response": agent_response[:80] + "...",
-                    "reward": reward,
-                    "rule_score": rule_score,
-                    "llm_score": llm_score,
-                    "resolved": is_resolved,
-                })
-
                 if done:
-                    results["resolved"] = is_resolved
-                    print(f"\n  ✅ Episode ended at step {step} | Resolved: {is_resolved}")
+                    results["resolved"] = step_obs.is_resolved if 'step_obs' in locals() else False
                     break
 
             # --- SUMMARY ---
             results["steps"] = step
-            results["total_reward"] = sum(log["reward"] for log in results["step_logs"])
-            results["avg_reward"] = results["total_reward"] / step if step > 0 else 0.0
-            results["avg_rule_score"] = sum(rule_scores) / len(rule_scores) if rule_scores else 0.0
-            results["avg_llm_score"] = sum(llm_scores) / len(llm_scores) if llm_scores else 0.0
+            results["rewards"] = rewards
+            results["total_reward"] = sum(rewards)
+            
+            # Correct score calculation (Average Reward of steps taken)
+            results["score"] = sum(rewards) / step if step > 0 else 0.0
+            results["score"] = min(max(results["score"], 0.0), 1.0)
+            results["avg_rule_score"] = sum(results["rule_scores"]) / len(results["rule_scores"]) if results["rule_scores"] else 0.0
+            results["avg_llm_score"] = sum(results["llm_scores"]) / len(results["llm_scores"]) if results["llm_scores"] else 0.0
+            results["success"] = results["resolved"] or (results["score"] >= SUCCESS_SCORE_THRESHOLD)
             
     except Exception as e:
-        print(f"  [ERROR] Client session failed: {e}")
+        debug_log(f"Client session failed: {e}")
 
+    log_end(success=results["success"], steps=results["steps"], score=results["score"], 
+            avg_rule=results["avg_rule_score"], avg_llm=results["avg_llm_score"], rewards=results["rewards"])
     return results
 
 
@@ -288,23 +334,23 @@ def run_task(task_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def main():
-    print("\n" + "=" * 65)
-    print("  BPO Customer Support Environment — Inference Runner")
-    print("=" * 65)
-    print(f"  Model   : {MODEL_NAME}")
-    print(f"  Server  : {SERVER_URL}")
-    print(f"  Tasks   : {', '.join(TASKS_TO_RUN)}")
-    print("=" * 65)
+    # Show configuration in stderr/stdout
+    debug_log("=" * 60)
+    debug_log("BPO Customer Support Environment — Inference Runner")
+    debug_log(f"Model   : {MODEL_NAME}")
+    debug_log(f"Server  : {SERVER_URL}")
+    debug_log(f"Env     : {APP_ENV}")
+    debug_log("=" * 60)
 
     # Validate env vars
-    if not OPENAI_API_KEY:
-        print("\n[ERROR] OPENAI_API_KEY is not set. Please export your OpenRouter API key.")
+    if not HF_TOKEN:
+        debug_log("HF_TOKEN (API Key) is not set. Please export your API key.")
         sys.exit(1)
 
     # Check server health
-    print(f"\n⏳ Checking server at {SERVER_URL} ...")
+    debug_log(f"Checking server at {SERVER_URL} ...")
     if not wait_for_server(SERVER_URL, timeout=10):
-        print(f"[WARNING] Server at {SERVER_URL} not responding. Attempting to start it...")
+        debug_log(f"Server at {SERVER_URL} not responding. Attempting to start it...")
         # Try to start server as a subprocess
         proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"],
@@ -313,40 +359,41 @@ def main():
             stderr=subprocess.DEVNULL,
         )
         if not wait_for_server(SERVER_URL, timeout=20):
-            print("[ERROR] Could not start server. Please run: uvicorn server.app:app --port 8000")
+            debug_log("Could not start server. Please run: uvicorn server.app:app --port 8000")
             sys.exit(1)
-        print("✅ Server started successfully.")
+        debug_log("Server started successfully.")
     else:
-        print("✅ Server is up!")
+        debug_log("Server is up!")
 
-    # Run all tasks
-    all_results = []
-    for task_name in TASKS_TO_RUN:
-        task_result = run_task(task_name)
-        all_results.append(task_result)
-        time.sleep(1)  # brief pause between tasks
+    if APP_ENV == "test":
+        # Multi-task mode (The Old Way)
+        all_results = []
+        for task_name in TASKS_TO_RUN:
+            task_result = run_task(task_name)
+            all_results.append(task_result)
+            time.sleep(1)
 
-    # Final Report
-    print("\n" + "=" * 65)
-    print("  FINAL RESULTS SUMMARY")
-    print("=" * 65)
-    print(f"  {'Task':<25} {'Steps':>5} {'Avg Reward':>11} {'Rule':>8} {'LLM':>8} {'Resolved':>9}")
-    print(f"  {'-'*25} {'-'*5} {'-'*11} {'-'*8} {'-'*8} {'-'*9}")
+        # Final Report
+        print("\n" + "=" * 65)
+        print("  FINAL RESULTS SUMMARY")
+        print("=" * 65)
+        print(f"  {'Task':<25} {'Steps':>5} {'Score':>11} {'Rule':>8} {'LLM':>8} {'Resolved':>9}")
+        print(f"  {'-'*25} {'-'*5} {'-'*11} {'-'*8} {'-'*8} {'-'*9}")
 
-    overall_rewards = []
-    for r in all_results:
-        resolved_str = "✅ Yes" if r["resolved"] else "❌ No"
-        print(
-            f"  {r['task_name']:<25} {r['steps']:>5} "
-            f"{r['avg_reward']:>11.4f} {r['avg_rule_score']:>8.4f} "
-            f"{r['avg_llm_score']:>8.4f} {resolved_str:>9}"
-        )
-        overall_rewards.append(r["avg_reward"])
-
-    if overall_rewards:
-        print(f"\n  🏆 Overall Average Reward: {sum(overall_rewards)/len(overall_rewards):.4f}")
-
-    print("\n  Done! All tasks completed.\n")
+        for r in all_results:
+            resolved_str = "✅ Yes" if r["resolved"] else "❌ No"
+            print(
+                f"  {r['task_name']:<25} {r['steps']:>5} "
+                f"{r['score']:>11.3f} {r['avg_rule_score']:>8.3f} "
+                f"{r['avg_llm_score']:>8.3f} {resolved_str:>9}"
+            )
+        
+        avg_score = sum(r['score'] for r in all_results) / len(all_results) if all_results else 0.0
+        print(f"\n  🏆 Overall Average Score: {avg_score:.3f}")
+        print("\n  Done! All tasks completed.\n")
+    else:
+        # Single-task mode (Benchmark style)
+        run_task(TASK_NAME)
 
 
 if __name__ == "__main__":
