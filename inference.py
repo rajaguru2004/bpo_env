@@ -68,20 +68,52 @@ def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, rule_score: float, llm_score: float, done: bool, error: Optional[str]) -> None:
+def log_step(
+    step: int,
+    action: str,
+    reward: float,
+    rule_score: float,
+    llm_score: float,
+    done: bool,
+    error: Optional[str],
+    stage: str = "",
+    mood: str = "",
+    intent: str = "",
+) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
-    # Normalize action_str to remove newlines for single-line compliance
     action_clean = action.replace("\n", " ").replace("\r", "")
+    extras = ""
+    if stage:
+        extras += f" stage={stage}"
+    if mood:
+        extras += f" mood={mood}"
+    if intent:
+        extras += f" intent={intent}"
     print(
-        f"[STEP] step={step} action={action_clean} reward={reward:.2f} rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val} error={error_val}",
+        f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
+        f"rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val}"
+        f"{extras} error={error_val}",
         flush=True,
     )
 
 
-def log_end(success: bool, steps: int, score: float, avg_rule: float, avg_llm: float, rewards: List[float]) -> None:
+def log_end(
+    success: bool,
+    steps: int,
+    score: float,
+    avg_rule: float,
+    avg_llm: float,
+    rewards: List[float],
+    grader_score: float = 0.0,
+) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} rewards={rewards_str}", flush=True)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
+        f"rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} "
+        f"grader_score={grader_score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
 
 # Helper for descriptive logs
 def debug_log(msg: str) -> None:
@@ -220,6 +252,9 @@ def run_task(task_name: str) -> Dict[str, Any]:
         "score": 0.0,
         "avg_rule_score": 0.0,
         "avg_llm_score": 0.0,
+        "grader_score": 0.0,
+        "final_stage": "",
+        "final_mood": "",
     }
 
     if APP_ENV == "test":
@@ -271,20 +306,37 @@ def run_task(task_name: str) -> Dict[str, Any]:
                 try:
                     from models import CustomerSupportAction
                     action = CustomerSupportAction(response=agent_response)
-                    
+
                     result = env.step(action)
-                    
+
                     step_obs = result.observation
                     reward = result.reward or 0.0
                     rule_score = getattr(step_obs, "rule_score", 0.0)
                     llm_score = getattr(step_obs, "llm_score", 0.0)
                     done = result.done
                     error = None
-                    
+
+                    # New state machine fields
+                    stage = getattr(step_obs, "conversation_stage", "")
+                    mood = getattr(step_obs, "customer_mood", "")
+                    intent = getattr(step_obs, "intent_detected", "")
+                    grader_score = getattr(step_obs, "grader_score", 0.0)
+
+                    if done:
+                        results["grader_score"] = grader_score
+                        results["final_stage"] = stage
+                        results["final_mood"] = mood
+
                     if APP_ENV == "test":
-                        print(f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | LLM: {llm_score:.3f} | Resolved: {step_obs.is_resolved}")
+                        print(
+                            f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | "
+                            f"LLM: {llm_score:.3f} | Stage: {stage} | "
+                            f"Mood: {mood} | Intent: {intent} | Resolved: {step_obs.is_resolved}"
+                        )
                         if not done and step_obs.customer_message:
                             print(f"  👤 Customer: {step_obs.customer_message}")
+                        if done and grader_score > 0:
+                            print(f"  🏆 Grader Score: {grader_score:.3f}")
 
                     results["rule_scores"].append(rule_score)
                     results["llm_scores"].append(llm_score)
@@ -294,12 +346,24 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     error = str(e)
                     reward = 0.0
                     done = True
+                    stage = ""
+                    mood = ""
+                    intent = ""
 
                 rewards.append(reward)
-                results["rule_scores"].append(rule_score)
-                results["llm_scores"].append(llm_score)
 
-                log_step(step=step, action=agent_response, reward=reward, rule_score=rule_score, llm_score=llm_score, done=done, error=error)
+                log_step(
+                    step=step,
+                    action=agent_response,
+                    reward=reward,
+                    rule_score=rule_score,
+                    llm_score=llm_score,
+                    done=done,
+                    error=error,
+                    stage=stage,
+                    mood=mood,
+                    intent=intent,
+                )
 
                 if not done:
                     conversation_history = step_obs.conversation_history
@@ -323,8 +387,15 @@ def run_task(task_name: str) -> Dict[str, Any]:
     except Exception as e:
         debug_log(f"Client session failed: {e}")
 
-    log_end(success=results["success"], steps=results["steps"], score=results["score"], 
-            avg_rule=results["avg_rule_score"], avg_llm=results["avg_llm_score"], rewards=results["rewards"])
+    log_end(
+        success=results["success"],
+        steps=results["steps"],
+        score=results["score"],
+        avg_rule=results["avg_rule_score"],
+        avg_llm=results["avg_llm_score"],
+        rewards=results["rewards"],
+        grader_score=results.get("grader_score", 0.0),
+    )
     return results
 
 
@@ -374,22 +445,25 @@ def main():
             time.sleep(1)
 
         # Final Report
-        print("\n" + "=" * 65)
+        print("\n" + "=" * 80)
         print("  FINAL RESULTS SUMMARY")
-        print("=" * 65)
-        print(f"  {'Task':<25} {'Steps':>5} {'Score':>11} {'Rule':>8} {'LLM':>8} {'Resolved':>9}")
-        print(f"  {'-'*25} {'-'*5} {'-'*11} {'-'*8} {'-'*8} {'-'*9}")
+        print("=" * 80)
+        print(f"  {'Task':<25} {'Steps':>5} {'Score':>8} {'Grader':>7} {'Rule':>7} {'LLM':>7} {'Mood':>9} {'Resolved':>9}")
+        print(f"  {'-'*25} {'-'*5} {'-'*8} {'-'*7} {'-'*7} {'-'*7} {'-'*9} {'-'*9}")
 
         for r in all_results:
             resolved_str = "✅ Yes" if r["resolved"] else "❌ No"
             print(
                 f"  {r['task_name']:<25} {r['steps']:>5} "
-                f"{r['score']:>11.3f} {r['avg_rule_score']:>8.3f} "
-                f"{r['avg_llm_score']:>8.3f} {resolved_str:>9}"
+                f"{r['score']:>8.3f} {r.get('grader_score', 0.0):>7.3f} "
+                f"{r['avg_rule_score']:>7.3f} {r['avg_llm_score']:>7.3f} "
+                f"{r.get('final_mood', 'n/a'):>9} {resolved_str:>9}"
             )
-        
-        avg_score = sum(r['score'] for r in all_results) / len(all_results) if all_results else 0.0
-        print(f"\n  🏆 Overall Average Score: {avg_score:.3f}")
+
+        avg_score = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0.0
+        avg_grader = sum(r.get("grader_score", 0.0) for r in all_results) / len(all_results) if all_results else 0.0
+        print(f"\n  🏆 Overall Average Score:  {avg_score:.3f}")
+        print(f"  🎯 Overall Grader Score:   {avg_grader:.3f}")
         print("\n  Done! All tasks completed.\n")
     else:
         # Single-task mode (Benchmark style)

@@ -43,20 +43,33 @@ class CustomerSupportEnv(
         # In WebSocket mode, the payload itself contains the serialized observation nested under "observation"
         obs_data = payload.get("observation", {})
         observation = CustomerSupportObservation(
+            # ── Core conversation ──────────────────────────────────────────
             customer_message=obs_data.get("customer_message", ""),
             conversation_history=obs_data.get("conversation_history", []),
+            # ── Task identity ──────────────────────────────────────────────
             task_name=obs_data.get("task_name", ""),
             task_difficulty=obs_data.get("task_difficulty", "easy"),
+            task_context=obs_data.get("task_context"),
+            # ── Episode progress ───────────────────────────────────────────
             step=obs_data.get("step", 0),
             max_steps=obs_data.get("max_steps", 10),
             is_resolved=obs_data.get("is_resolved", False),
+            # ── State machine fields (NEW) ─────────────────────────────────
+            conversation_stage=obs_data.get("conversation_stage", "start"),
+            customer_mood=obs_data.get("customer_mood", "neutral"),
+            issue_status=obs_data.get("issue_status", "unresolved"),
+            intent_detected=obs_data.get("intent_detected", ""),
+            hints=obs_data.get("hints", []),
+            # ── Reward components ──────────────────────────────────────────
             rule_score=obs_data.get("rule_score", 0.0),
             llm_score=obs_data.get("llm_score", 0.0),
+            stage_reward=obs_data.get("stage_reward", 0.0),
             final_reward=obs_data.get("final_reward", 0.0),
+            grader_score=obs_data.get("grader_score", 0.0),
+            # ── OpenEnv standard ───────────────────────────────────────────
             done=payload.get("done", False),
             reward=payload.get("reward"),
             metadata=obs_data.get("metadata", {}),
-            task_context=obs_data.get("task_context"),
         )
         return StepResult(
             observation=observation,
