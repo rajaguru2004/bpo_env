@@ -3,3 +3,5 @@
 /reasoning_gym_env
 __pycache__/*
 *.log
+.agents/*
+.codex/*
