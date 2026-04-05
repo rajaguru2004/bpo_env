@@ -199,15 +199,22 @@ def call_llm_agent(
 
     messages = [{"role": "system", "content": _format_content(full_system_prompt)}]
 
-    # Convert conversation history to the appropriate format
-    formatted_history = []
-    for msg in conversation_history:
-        formatted_history.append({
-            "role": msg["role"],
-            "content": _format_content(msg["content"]),
+    # For conversation history: keep all prior turns as plain strings for proper
+    # multi-turn context. Only format the LAST user message for HF Router compatibility.
+    # Together AI's backend loses context when the entire history uses list-of-dicts.
+    if conversation_history:
+        # All messages except the last get plain string content
+        for msg in conversation_history[:-1]:
+            messages.append({
+                "role": msg["role"],
+                "content": msg["content"],  # Always plain string for history
+            })
+        # Last message (current customer input) gets provider-specific format
+        last_msg = conversation_history[-1]
+        messages.append({
+            "role": last_msg["role"],
+            "content": _format_content(last_msg["content"]),
         })
-
-    messages.extend(formatted_history)
 
     try:
         debug_log(f"Calling LLM Agent: {MODEL_NAME} ...")
