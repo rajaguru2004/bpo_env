@@ -40,16 +40,18 @@ if os.path.exists(env_path):
 from openai import OpenAI
 
 # Required by the Benchmark runner
-API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("LLM_BASEURL") or "https://openrouter.ai/api/v1"
+API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("LLM_BASEURL") or "https://router.huggingface.co/v1"
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3-super-120b-a12b:free")
-TASK_NAME = os.getenv("MY_ENV_V4_TASK", "order_status")
-BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "bpo_env")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", os.getenv("IMAGE_NAME", ""))
+TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "order_status"))
+BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 APP_ENV = os.getenv("APP_ENV", "prod")  # 'prod' for benchmarks, 'test' for verbose multi-tasking
 
 # Score calculation metrics — success requires genuine resolution, not just threshold
 MAX_STEPS_DEFAULT = 10
+SUCCESS_SCORE_THRESHOLD = 0.5  # normalized score in [0, 1]
 
 client = OpenAI(
     base_url=API_BASE_URL,
@@ -57,7 +59,7 @@ client = OpenAI(
 )
 
 # ---------------------------------------------------------------------------
-# Logging Functions (STDOUT Only)
+# Logging Functions (STDOUT for Benchmark, STDERR for Debug)
 # ---------------------------------------------------------------------------
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -78,20 +80,34 @@ def log_step(
 ) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
+    # Clean action string for logs (no raw newlines)
     action_clean = action.replace("\n", " ").replace("\r", "")
-    extras = ""
-    if stage:
-        extras += f" stage={stage}"
-    if mood:
-        extras += f" mood={mood}"
-    if intent:
-        extras += f" intent={intent}"
-    print(
-        f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
-        f"rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val}"
-        f"{extras} error={error_val}",
-        flush=True,
-    )
+    
+    if APP_ENV == "test":
+        # VERBOSE LOGGING FOR TEST MODE
+        extras = ""
+        if stage: extras += f" stage={stage}"
+        if mood: extras += f" mood={mood}"
+        if intent: extras += f" intent={intent}"
+        print(
+            f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
+            f"rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val}"
+            f"{extras} error={error_val}",
+            flush=True,
+        )
+    else:
+        # OUTPUT MANDATORY FIELDS ONLY TO STDOUT (Benchmark Mode)
+        print(
+            f"[STEP] step={step} action={action_clean} reward={reward:.2f} done={done_val} error={error_val}",
+            flush=True,
+        )
+        
+        # EXTRA STATE INFO TO STDERR (STAYING IN [DEBUG])
+        extras = f"rule_score={rule_score:.2f} llm_score={llm_score:.2f}"
+        if stage: extras += f" stage={stage}"
+        if mood: extras += f" mood={mood}"
+        if intent: extras += f" intent={intent}"
+        print(f"   [DEBUG] STEP {step} EXTRAS: {extras}", file=sys.stderr, flush=True)
 
 
 def log_end(
@@ -105,13 +121,28 @@ def log_end(
     failure_reason: str = "",
 ) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
-    print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
-        f"rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} "
-        f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}",
-        flush=True,
-    )
+    
+    if APP_ENV == "test":
+        # VERBOSE SUMMARY FOR TEST MODE
+        failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
+        print(
+            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
+            f"rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} "
+            f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}",
+            flush=True,
+        )
+    else:
+        # OUTPUT MANDATORY FIELDS ONLY TO STDOUT (Benchmark Mode)
+        print(
+            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+            flush=True,
+        )
+        
+        # EXTRA SUMMARY INFO TO STDERR
+        print(
+            f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} llm={avg_llm:.3f} grader={grader_score:.3f} reason={failure_reason}",
+            file=sys.stderr, flush=True
+        )
 
 # Helper for descriptive logs
 def debug_log(msg: str) -> None:
@@ -409,15 +440,20 @@ def run_task(task_name: str) -> Dict[str, Any]:
             results["rewards"] = rewards
             results["total_reward"] = sum(rewards)
             
-            # Score = average reward across steps (may be negative for bad episodes)
-            raw_score = sum(rewards) / step if step > 0 else 0.0
-            results["score"] = min(1.0, max(-1.0, raw_score))  # Allow negatives to propagate
+            # Score Calculation: Favor grader_score (0-1) if available, 
+            # otherwise normalize avg reward.
+            g_score = results.get("grader_score", 0.0)
+            if g_score > 0:
+                results["score"] = g_score
+            else:
+                raw_score = sum(rewards) / step if step > 0 else 0.0
+                results["score"] = min(1.0, max(0.0, raw_score))
+                
             results["avg_rule_score"] = sum(results["rule_scores"]) / len(results["rule_scores"]) if results["rule_scores"] else 0.0
             results["avg_llm_score"] = sum(results["llm_scores"]) / len(results["llm_scores"]) if results["llm_scores"] else 0.0
-            # success requires genuine resolution — not just a score threshold
-            # (already set in loop; only override if never set)
-            if not results["success"]:
-                results["success"] = results["resolved"]
+            
+            # Success is determined by score threshold OR manual resolution flag
+            results["success"] = results["score"] >= SUCCESS_SCORE_THRESHOLD or results["resolved"]
             
     except Exception as e:
         debug_log(f"Client session failed: {e}")

@@ -5,6 +5,7 @@ Summary: BPO Customer Support Resolution Environment for OpenEnv
 Requires-Python: >=3.10
 Requires-Dist: openenv-core[core]>=0.2.2
 Requires-Dist: openai>=1.0.0
+Requires-Dist: python-dotenv>=1.0.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
 Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
