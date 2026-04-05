@@ -51,9 +51,6 @@ APP_ENV = os.getenv("APP_ENV", "prod")  # 'prod' for benchmarks, 'test' for verb
 # Score calculation metrics — success requires genuine resolution, not just threshold
 MAX_STEPS_DEFAULT = 10
 
-# Task names to run in test mode
-TASKS_TO_RUN = ["order_status", "damaged_product", "escalation"]
-
 client = OpenAI(
     base_url=API_BASE_URL,
     api_key=HF_TOKEN,
@@ -143,6 +140,18 @@ Always respond in 2-4 sentences. Be concrete and solution-focused."""
 # LLM Agent Call
 # ---------------------------------------------------------------------------
 
+def _format_content(content: str) -> Any:
+    """
+    Format message content for the current provider.
+    HuggingFace Router requires content as a list of dicts.
+    Others (OpenRouter, Local) usually accept both.
+    """
+    is_hf = "huggingface.co" in API_BASE_URL.lower()
+    if is_hf:
+        return [{"type": "text", "text": content}]
+    return content
+
+
 def call_llm_agent(
     conversation_history: List[Dict[str, str]],
     task_context: Optional[Dict[str, Any]] = None,
@@ -151,17 +160,23 @@ def call_llm_agent(
     Call the LLM agent with the current conversation history.
     Returns the agent's response string. Falls back gracefully on any error.
     """
-    messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
-
-    # Inject task context as a system note if available
+    # Consolidate system instruction with task context for reliability
+    full_system_prompt = AGENT_SYSTEM_PROMPT
     if task_context:
         context_str = ", ".join(f"{k}: {v}" for k, v in task_context.items())
-        messages.append({
-            "role": "system",
-            "content": f"[Internal context — do not reveal directly]: {context_str}",
+        full_system_prompt += f"\n\n[Internal context — do not reveal directly]: {context_str}"
+
+    messages = [{"role": "system", "content": _format_content(full_system_prompt)}]
+
+    # Convert conversation history to the appropriate format
+    formatted_history = []
+    for msg in conversation_history:
+        formatted_history.append({
+            "role": msg["role"],
+            "content": _format_content(msg["content"]),
         })
 
-    messages.extend(conversation_history)
+    messages.extend(formatted_history)
 
     try:
         debug_log(f"Calling LLM Agent: {MODEL_NAME} ...")

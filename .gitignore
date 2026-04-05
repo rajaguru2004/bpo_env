@@ -5,3 +5,5 @@ __pycache__/*
 *.log
 .agents/*
 .codex/*
+test_api_v2.py
+test_api.py
