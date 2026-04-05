@@ -372,6 +372,43 @@ TASK_STAGES: Dict[str, List[Dict[str, Any]]] = {
             "max_stall": 3,
         },
     ],
+    "subscription_management": [
+        {
+            "name": "start",
+            "accepted_intents": {"greeting", "apology", "de_escalation", "information_request"},
+            "advance_intents": {"greeting", "apology", "de_escalation"},
+            "hint": "Greet the customer and acknowledge their subscription inquiry.",
+            "max_stall": 2,
+        },
+        {
+            "name": "verification",
+            "accepted_intents": {"information_request", "de_escalation", "apology"},
+            "advance_intents": {"information_request"},
+            "hint": "Ask for their account ID or email to verify the subscription.",
+            "max_stall": 2,
+        },
+        {
+            "name": "retention",
+            "accepted_intents": {"resolution_offer", "de_escalation", "information_provide"},
+            "advance_intents": {"resolution_offer", "de_escalation"},
+            "hint": "Offer a discount or a free month to encourage them to stay.",
+            "max_stall": 3,
+        },
+        {
+            "name": "decision",
+            "accepted_intents": {"resolution_offer", "information_request", "confirmation"},
+            "advance_intents": {"resolution_offer", "confirmation"},
+            "hint": "Confirm if they still want to cancel or if they've accepted the offer.",
+            "max_stall": 2,
+        },
+        {
+            "name": "closure",
+            "accepted_intents": {"confirmation", "de_escalation", "greeting"},
+            "advance_intents": {"confirmation"},
+            "hint": "Close the interaction professionally.",
+            "max_stall": 2,
+        },
+    ],
 }
 
 # Stage-skip map: if any of these intents appear, jump directly to target_stage
@@ -380,13 +417,13 @@ STAGE_SKIP_RULES: List[Dict[str, Any]] = [
     {
         "trigger_intents": {"resolution_offer"},
         "target_stage": "resolution",
-        "tasks": {"damaged_product", "escalation"},
+        "tasks": {"damaged_product", "escalation", "subscription_management"},
         "min_stage_idx": 1,  # must have progressed past start
     },
     {
         "trigger_intents": {"confirmation"},
         "target_stage": "closure",
-        "tasks": {"order_status", "damaged_product", "escalation"},
+        "tasks": {"order_status", "damaged_product", "escalation", "subscription_management"},
         "min_stage_idx": 2,  # must be at least past diagnosis/empathy
     },
 ]
@@ -443,6 +480,33 @@ CUSTOMER_SCRIPTS: Dict[str, Dict[str, Dict[str, List[str]]]] = {
             "angry":     ["Fine. I hope this doesn't happen again."],
             "neutral":   ["Thank you, that's all I needed."],
             "satisfied": ["Perfect, thank you for the quick help!"],
+        },
+    },
+    "subscription_management": {
+        "start": {
+            "angry":     ["I've been trying to cancel my subscription for weeks! Stop charging me!"],
+            "neutral":   ["Hi, I'd like to talk about my current subscription plan. It's a bit too expensive."],
+            "satisfied": ["I love the service, but I'm looking to optimize my subscription costs."],
+        },
+        "verification": {
+            "angry":     ["Why do you need my ID? Just CANCEL it! Fine, it's SUBS-999."],
+            "neutral":   ["Sure, my account ID is SUBS-999."],
+            "satisfied": ["Of course, here is my ID: SUBS-999."],
+        },
+        "retention": {
+            "angry":     ["I don't want a discount. I want to leave!"],
+            "neutral":   ["A 20% discount? That sounds interesting. Can you tell me more?"],
+            "satisfied": ["That sounds great! I'd love to stay if you can offer that discount."],
+        },
+        "decision": {
+            "angry":     ["No. Just process the cancellation and send me a confirmation."],
+            "neutral":   ["Okay, go ahead and apply the discount. I'll keep the subscription."],
+            "satisfied": ["Yes, please apply the offer. I'm happy to stay."],
+        },
+        "closure": {
+            "angry":     ["Finally. I'm glad this is over."],
+            "neutral":   ["Thank you for the help today."],
+            "satisfied": ["Excellent service, glad we could work it out! Have a great day!"],
         },
     },
     "damaged_product": {
@@ -560,6 +624,21 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "prior_contacts": 3,
         },
         "provide_hints": False,
+        "max_consecutive_failures": 4,
+        "max_consecutive_repetitions": 3,
+    },
+    "subscription_management": {
+        "difficulty": "medium",
+        "max_steps": 8,
+        "description": "Customer wants to cancel or change their subscription. Offer retention incentives.",
+        "initial_mood": "neutral",
+        "context": {
+            "account_id": "SUBS-999",
+            "plan_type": "Premium Elite",
+            "monthly_cost": "$49.99",
+            "join_date": "2024-01-15",
+        },
+        "provide_hints": True,
         "max_consecutive_failures": 4,
         "max_consecutive_repetitions": 3,
     },
