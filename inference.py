@@ -71,7 +71,6 @@ def log_step(
     action: str,
     reward: float,
     rule_score: float,
-    llm_score: float,
     done: bool,
     error: Optional[str],
     stage: str = "",
@@ -91,7 +90,7 @@ def log_step(
         if intent: extras += f" intent={intent}"
         print(
             f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
-            f"rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val}"
+            f"rule_score={rule_score:.2f} done={done_val}"
             f"{extras} error={error_val}",
             flush=True,
         )
@@ -101,9 +100,8 @@ def log_step(
             f"[STEP] step={step} action={action_clean} reward={reward:.2f} done={done_val} error={error_val}",
             flush=True,
         )
-        
-        # EXTRA STATE INFO TO STDERR (STAYING IN [DEBUG])
-        extras = f"rule_score={rule_score:.2f} llm_score={llm_score:.2f}"
+        # EXTRA STATE INFO TO STDERR
+        extras = f"rule_score={rule_score:.2f}"
         if stage: extras += f" stage={stage}"
         if mood: extras += f" mood={mood}"
         if intent: extras += f" intent={intent}"
@@ -115,20 +113,21 @@ def log_end(
     steps: int,
     score: float,
     avg_rule: float,
-    avg_llm: float,
     rewards: List[float],
     grader_score: float = 0.0,
     failure_reason: str = "",
+    reward_reason: str = "",
 ) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     
     if APP_ENV == "test":
         # VERBOSE SUMMARY FOR TEST MODE
         failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
+        reason_str  = f" reward_reason={reward_reason}" if reward_reason else ""
         print(
             f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
-            f"rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} "
-            f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}",
+            f"rule_score={avg_rule:.3f} "
+            f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}{reason_str}",
             flush=True,
         )
     else:
@@ -137,10 +136,9 @@ def log_end(
             f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
             flush=True,
         )
-        
         # EXTRA SUMMARY INFO TO STDERR
         print(
-            f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} llm={avg_llm:.3f} grader={grader_score:.3f} reason={failure_reason}",
+            f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} grader={grader_score:.3f} reason={failure_reason} reward_reason={reward_reason}",
             file=sys.stderr, flush=True
         )
 
@@ -300,16 +298,15 @@ def run_task(task_name: str) -> Dict[str, Any]:
         "total_reward": 0.0,
         "rewards": [],
         "rule_scores": [],
-        "llm_scores": [],
         "resolved": False,
         "success": False,
         "score": 0.0,
         "avg_rule_score": 0.0,
-        "avg_llm_score": 0.0,
         "grader_score": 0.0,
         "final_stage": "",
         "final_mood": "",
         "failure_reason": "",
+        "reward_reason": "",
         "repetition_count": 0,
         "stall_count": 0,
     }
@@ -369,7 +366,6 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     step_obs = result.observation
                     reward = result.reward or 0.0
                     rule_score = getattr(step_obs, "rule_score", 0.0)
-                    llm_score = getattr(step_obs, "llm_score", 0.0)
                     done = result.done
                     error = None
 
@@ -378,12 +374,14 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     mood = getattr(step_obs, "customer_mood", "")
                     intent = getattr(step_obs, "intent_detected", "")
                     grader_score = getattr(step_obs, "grader_score", 0.0)
+                    reward_reason = getattr(step_obs, "reward_reason", "")
                     rep_count = getattr(step_obs, "repetition_count", 0)
                     stall_count = getattr(step_obs, "stall_count", 0)
                     failure_reason = getattr(step_obs, "failure_reason", "")
 
                     if done:
                         results["grader_score"] = grader_score
+                        results["reward_reason"] = reward_reason
                         results["final_stage"] = stage
                         results["final_mood"] = mood
                         results["failure_reason"] = failure_reason
@@ -405,16 +403,17 @@ def run_task(task_name: str) -> Dict[str, Any]:
                             is_success = getattr(step_obs, 'success', False) or getattr(step_obs, 'is_resolved', False)
                             success_str = "✅ SUCCESS" if is_success else "❌ FAIL"
                             print(f"  🏆 Grader: {grader_score:.3f} | {success_str}"
-                                  + (f" | Reason: {failure_reason}" if failure_reason else ""))
+                                  + (f" | Reason: {failure_reason}" if failure_reason else "")
+                                  + (f" | {reward_reason}" if reward_reason else ""))
 
                     results["rule_scores"].append(rule_score)
-                    results["llm_scores"].append(llm_score)
 
                 except Exception as e:
                     debug_log(f"Step failed: {e}")
                     error = str(e)
                     reward = 0.0
                     done = True
+                    rule_score = 0.0
                     stage = ""
                     mood = ""
                     intent = ""
@@ -426,7 +425,6 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     action=agent_response,
                     reward=reward,
                     rule_score=rule_score,
-                    llm_score=llm_score,
                     done=done,
                     error=error,
                     stage=stage,
@@ -457,7 +455,6 @@ def run_task(task_name: str) -> Dict[str, Any]:
                 results["score"] = min(1.0, max(0.0, raw_score))
                 
             results["avg_rule_score"] = sum(results["rule_scores"]) / len(results["rule_scores"]) if results["rule_scores"] else 0.0
-            results["avg_llm_score"] = sum(results["llm_scores"]) / len(results["llm_scores"]) if results["llm_scores"] else 0.0
             
             # Success is determined by score threshold OR manual resolution flag
             results["success"] = results["score"] >= SUCCESS_SCORE_THRESHOLD or results["resolved"]
@@ -470,10 +467,10 @@ def run_task(task_name: str) -> Dict[str, Any]:
         steps=results["steps"],
         score=results["score"],
         avg_rule=results["avg_rule_score"],
-        avg_llm=results["avg_llm_score"],
         rewards=results["rewards"],
         grader_score=results.get("grader_score", 0.0),
         failure_reason=results.get("failure_reason", ""),
+        reward_reason=results.get("reward_reason", ""),
     )
     return results
 
