@@ -4,8 +4,8 @@ Data models for the BPO Customer Support Environment.
 The bpo_env environment simulates real-world customer support conversations
 where an LLM agent acts as a customer support executive.
 
-Version 4: Flexible multi-intent state machine — multi-intent detection,
-partial credit rewards, recovery mechanism, hybrid LLM/rule grader.
+Version 5: Normalized reward system — deterministic, pure rule-based grader,
+bounded reward [0,1], reward equals grader_score at episode end.
 """
 
 from typing import Any, Dict, List, Optional
@@ -105,23 +105,15 @@ class CustomerSupportObservation(Observation):
     # ── Reward components ──────────────────────────────────────────────────
     rule_score: float = Field(
         default=0.0,
-        description="Rule-based step quality score normalized to [0,1]",
-    )
-    llm_score: float = Field(
-        default=0.0,
-        description="LLM judge score [0,1] — blended into final grader (0.85*rule + 0.15*llm)",
-    )
-    stage_reward: float = Field(
-        default=0.0,
-        description="Bonus reward for advancing conversation stage (+0.3)",
-    )
-    final_reward: float = Field(
-        default=0.0,
-        description="Combined final reward for last step (deterministic step + terminal)",
+        description="Rule-based step quality score normalized to [0,1] — used internally by grader",
     )
     grader_score: float = Field(
         default=0.0,
-        description="Hybrid grader score (0.0–1.0), populated only at done=True",
+        description="Calibrated episode score [0.0–1.0], populated only at done=True. reward==grader_score at episode end.",
+    )
+    reward_reason: str = Field(
+        default="",
+        description="Human-readable explanation of the reward (e.g. 'Resolved with closure')",
     )
 
     # ── Base fields for framework compatibility ───────────────────────────

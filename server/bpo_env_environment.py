@@ -1,16 +1,19 @@
 """
-Customer Support Environment Implementation — v4 (Flexible Multi-Intent).
+Customer Support Environment Implementation — v6 (Completeness + Sequencing Reward).
 
 Simulates real-world customer support conversations with:
   - Multi-intent classification: a single response can carry multiple intents
   - Flexible stage transitions: any matching intent advances the stage
   - Stage-skip: strong resolution-oriented responses can skip minor stages
-  - Partial credit rewards: graded rewards instead of binary pass/fail
-  - Recovery mechanism: good step after bad step gets recovery bonus (+0.2)
-  - Relaxed failure conditions: higher thresholds before termination
-  - Hybrid grader: 0.85 * rule_score + 0.15 * llm_score
-  - Deterministic step rewards (no LLM per step)
-  - LLM judge called ONCE per episode for metadata + grader blend
+  - Completeness validation: required fields per stage must be present in response
+  - Sequence validation: information must be provided in the correct order
+  - Tri-partite reward: 0.4*intent + 0.4*completeness + 0.2*sequence
+  - Penalty rules: missing info, wrong sequence, vague/short responses
+  - Strict but fair: partial answers are penalized, complete answers rewarded
+  - Pure rule-based grader (no LLM dependency)
+  - Normalized reward: always in [0.0, 1.0]
+  - reward == grader_score at episode end (perfect alignment)
+  - reward_reason explains every score with specific missing-field detail
 
 Agent (LLM) acts as a customer support executive.
 Three difficulty levels: easy / medium / hard.
@@ -429,6 +432,257 @@ STAGE_SKIP_RULES: List[Dict[str, Any]] = [
 ]
 
 
+# ===========================================================================
+# REQUIRED FIELDS REGISTRY (per task, per stage)
+# Defines what information MUST appear in a response to be considered complete.
+# Each field entry is a list of keyword alternatives (OR logic).
+# All entries in the list must be present (AND logic between entries).
+# ===========================================================================
+
+# Structure:
+#   REQUIRED_FIELDS[task_name][stage_name] = [
+#       [kw_alt1, kw_alt2, ...],   # field 1 — any one keyword satisfies it
+#       [kw_alt1, kw_alt2, ...],   # field 2 — any one keyword satisfies it
+#       ...                         # ALL fields must be satisfied for score=1.0
+#   ]
+
+REQUIRED_FIELDS: Dict[str, Dict[str, List[List[str]]]] = {
+    "order_status": {
+        # start: just greeting/ack — no hard content requirement
+        "start": [],
+        # inquiry: must provide tracking number AND/OR current order status
+        "inquiry": [
+            ["tracking number", "tracking id", "trk", "tracking #", "shipment tracking"],  # field A: tracking
+            ["order status", "shipped", "in transit", "on its way",
+             "out for delivery", "dispatched", "processed"],                                 # field B: status
+        ],
+        # resolution: must provide tracking AND delivery date
+        "resolution": [
+            ["tracking number", "tracking id", "trk", "tracking #"],                        # field A: tracking
+            ["expected delivery", "estimated delivery", "delivery date",
+             "arrive", "arrival", "deliver by", "delivered by",
+             "april", "march", "may", "days"],                                               # field B: delivery date
+        ],
+        # closure: must include confirmation/sign-off
+        "closure": [
+            ["case number", "reference number", "ticket number",
+             "anything else", "have a", "take care", "resolved",
+             "thank you", "my pleasure", "you're welcome"],                                  # field A: closure phrase
+        ],
+    },
+    "damaged_product": {
+        "start": [],
+        # empathy: must apologize and show empathy
+        "empathy": [
+            ["apologize", "sorry", "apologies", "regret"],                                  # field A: apology word
+            ["understand", "hear you", "frustrat", "inconvenience",
+             "concern", "appreciate your patience"],                                         # field B: empathy phrase
+        ],
+        # diagnosis: must ask for or reference order/product details
+        "diagnosis": [
+            ["order number", "order #", "order id", "98765",
+             "photo", "describe", "details", "can you confirm",
+             "what happened", "damaged", "broken"],                                          # field A: order/damage ref
+        ],
+        # resolution: must offer replacement or refund with timeline
+        "resolution": [
+            ["replacement", "replace", "new unit", "refund",
+             "send a new", "ship a new", "arrange"],                                         # field A: action offered
+            ["days", "hours", "week", "business days",
+             "24", "48", "3-5", "timeline", "when"],                                         # field B: timeline
+        ],
+        # closure: must give case/reference number and sign off
+        "closure": [
+            ["case number", "reference number", "ticket number",
+             "case id", "ref", "number is", "confirmation",
+             "anything else", "have a", "take care", "thank you"],                           # field A: ref or sign-off
+        ],
+    },
+    "escalation": {
+        "start": [],
+        # de_escalation: must sincerely apologize and show empathy
+        "de_escalation": [
+            ["apologize", "sorry", "apologies", "sincerely"],                               # field A: apology
+            ["understand", "frustrat", "hear you", "concern",
+             "appreciate", "regret", "i acknowledge"],                                       # field B: empathy
+        ],
+        # acknowledgement: must escalate or mention manager/supervisor
+        "acknowledgement": [
+            ["escalate", "supervisor", "manager", "senior",
+             "team lead", "specialist", "pass this",
+             "transfer", "connect you with"],                                                # field A: escalation action
+        ],
+        # resolution: must offer refund/resolution with a timeline
+        "resolution": [
+            ["refund", "full refund", "replace", "compensation",
+             "credit", "resolve", "process"],                                                # field A: resolution type
+            ["days", "hours", "24", "48", "3-5", "week",
+             "business days", "timeline", "within"],                                         # field B: timeline
+        ],
+        # closure: give case number and close
+        "closure": [
+            ["case number", "reference number", "ticket number",
+             "case id", "confirmation", "ref",
+             "anything else", "have a", "take care", "thank you"],                           # field A: closure
+        ],
+    },
+}
+
+
+# ===========================================================================
+# SEQUENCE VIOLATION RULES
+# Detect when a response provides information that is only correct AFTER
+# a certain stage has been reached.
+# ===========================================================================
+
+# Each rule: if stage_index < required_stage_idx AND any trigger keyword found → penalty
+SEQUENCE_RULES: List[Dict[str, Any]] = [
+    {
+        # Should not give status info without tracking info (order_status)
+        "task": "order_status",
+        "max_stage_idx": 1,
+        "trigger_keywords": [
+            "shipped", "in transit", "on its way", "dispatched", "processed", 
+            "out for delivery", "status is", "order is",
+        ],
+        "prerequisite_keywords": [
+            "tracking number", "tracking id", "trk", "tracking #",
+        ],
+        "penalty": 0.8,
+        "reason": "Provided status info without providing a tracking number.",
+    },
+    {
+        # Should not give delivery date at inquiry stage (must give tracking first)
+        "task": "order_status",
+        "max_stage_idx": 1,          # Only applies when at stage 0 or 1 (start/inquiry)
+        "trigger_keywords": [
+            "expected delivery", "delivery date", "estimated delivery",
+            "deliver by", "arrive by", "arrival date", "arrive on",
+            "delivery on", "estimated arrival", "arrival at",
+            "arrive", "delivery",  # broader triggers
+        ],
+        "prerequisite_keywords": [
+            "tracking number", "tracking id", "trk", "tracking #",
+        ],
+        "penalty": 0.4,              # sequence_score is reduced by this
+        "reason": "Provided delivery date before confirming tracking number.",
+    },
+    {
+        # Should not offer resolution before showing empathy (damaged_product)
+        "task": "damaged_product",
+        "max_stage_idx": 1,          # start or empathy stage
+        "trigger_keywords": [
+            "replacement", "refund", "send a new", "ship a new",
+        ],
+        "prerequisite_keywords": [
+            "apologize", "sorry", "apologies", "understand",
+        ],
+        "penalty": 0.3,
+        "reason": "Jumped to resolution before showing empathy.",
+    },
+    {
+        # Should not close before resolution (all tasks)
+        "task": None,                # applies to all tasks
+        "max_stage_idx": 1,          # any early stage
+        "trigger_keywords": [
+            "case number", "reference number", "ticket number",
+            "have a wonderful day", "have a great day", "all set",
+        ],
+        "prerequisite_keywords": [],  # no prerequisite — just flag the premature closure
+        "penalty": 0.5,
+        "reason": "Premature closure — jumped to end before resolving the issue.",
+    },
+]
+
+
+# ===========================================================================
+# COMPLETENESS VALIDATION
+# ===========================================================================
+
+def check_completeness(
+    response: str,
+    task_name: str,
+    stage_name: str,
+) -> Tuple[float, List[str]]:
+    """
+    Validate that the response contains all required fields for the given stage.
+
+    Returns:
+        completeness_score (float in [0.0, 1.0]): fraction of required fields satisfied.
+        missing_fields (List[str]): human-readable descriptions of missing fields.
+    """
+    task_fields = REQUIRED_FIELDS.get(task_name, {})
+    stage_fields: List[List[str]] = task_fields.get(stage_name, [])
+
+    # No requirements defined → full credit (neutral stage)
+    if not stage_fields:
+        return 1.0, []
+
+    lower = response.lower()
+    satisfied = 0
+    missing: List[str] = []
+
+    for idx, keyword_group in enumerate(stage_fields):
+        # Each group is a list of keyword alternatives (OR logic)
+        if any(kw in lower for kw in keyword_group):
+            satisfied += 1
+        else:
+            # Build a short human-readable label for the missing field
+            # Use first keyword in group as representative
+            rep = keyword_group[0] if keyword_group else f"field_{idx+1}"
+            missing.append(rep)
+
+    score = satisfied / len(stage_fields)
+    return score, missing
+
+
+# ===========================================================================
+# SEQUENCE VALIDATION
+# ===========================================================================
+
+def check_sequence(
+    response: str,
+    task_name: str,
+    stage_index: int,
+) -> Tuple[float, str]:
+    """
+    Validate that the response follows the correct information order.
+
+    Returns:
+        sequence_score (float in [0.0, 1.0]): 1.0 = correct order, lower = violation.
+        violation_reason (str): human-readable reason if violated, else empty string.
+    """
+    lower = response.lower()
+    violations: List[str] = []
+    total_penalty = 0.0
+
+    for rule in SEQUENCE_RULES:
+        # Check task match (None = all tasks)
+        if rule["task"] is not None and rule["task"] != task_name:
+            continue
+        # Only apply if we are at or below the max_stage_idx threshold
+        if stage_index > rule["max_stage_idx"]:
+            continue
+        # Check if trigger keywords are present
+        trigger_hit = any(kw in lower for kw in rule["trigger_keywords"])
+        if not trigger_hit:
+            continue
+        # Check if prerequisite keywords are present (which would make it acceptable)
+        prereqs = rule.get("prerequisite_keywords", [])
+        prereq_met = any(kw in lower for kw in prereqs) if prereqs else False
+        if prereqs and prereq_met:
+            # Prerequisites are present → this is actually correct ordering
+            continue
+        # Violation detected
+        violations.append(rule["reason"])
+        total_penalty = max(total_penalty, rule["penalty"])
+
+    if violations:
+        sequence_score = max(0.0, 1.0 - total_penalty)
+        return sequence_score, " | ".join(violations)
+    return 1.0, ""
+
+
 def _get_skip_target(
     task_name: str,
     intents: Set[str],
@@ -782,102 +1036,167 @@ class EpisodeState:
 # REWARD COMPUTATION
 # ===========================================================================
 
-# Step reward constants (v4 — reduced extremes, added partial tiers)
-_R_CORRECT_ACTION  = +0.5   # response fully matches accepted_intents
-_R_PARTIAL_ACTION  = +0.3   # some intents match (partial coverage)
-_R_HELPFUL_ACTION  = +0.1   # off-stage but contextually helpful
-_R_STAGE_ADVANCE   = +0.3   # triggered a stage transition
-_R_RECOVERY_BONUS  = +0.2   # recovered from a wrong step
-_R_WRONG_ACTION    = -0.3   # no intent matches accepted (was -0.4)
-_R_REPETITION      = -0.5   # repeated response (unchanged)
-_R_STALL           = -0.2   # stuck in stage too long (was -0.3)
-_R_OFF_TOPIC       = -0.3   # no keywords detected (was -0.4)
-
-# Terminal reward constants
-_R_SUCCESS         = +1.0   # resolved AND closure reached
-_R_PARTIAL_RESOLVE = +0.2   # resolved but no closure (was -0.5 — now positive!)
-_R_FAILURE         = -0.5   # not resolved at episode end (was -1.0)
-_R_NO_APOLOGY      = -0.3   # damaged_product: no apology — applied once at end (was -0.5)
-
+# ===========================================================================
+# STEP REWARD — v6 Tri-Partite Formula
+# final_score = 0.4*intent_score + 0.4*completeness_score + 0.2*sequence_score
+# Each component is in [0.0, 1.0]; final_score clamped to [0.0, 1.0].
+#
+# Intent score mapping:
+#   All intents match accepted set (≥2 or sole match): 1.0
+#   Partial match (1 of many):                         0.6
+#   Wrong intent (no match):                           0.1
+#   Off-topic only:                                    0.0
+#   Repetitive:                                        0.0
+#
+# Completeness: derived from check_completeness() [0.0–1.0]
+#   Short/vague response (<10 words) caps completeness at 0.3
+#
+# Sequence: derived from check_sequence() [0.0–1.0]
+#   0.0 = severe out-of-order; 1.0 = correct ordering
+#
+# Stall penalty: -0.1 subtracted from final_score when stalling
+# Repetition:    intent_score=0, completeness_score=0 → near-zero reward
+# ===========================================================================
 
 def _compute_step_reward(
+    response_text: str,
     intents: List[str],
     intents_set: Set[str],
     accepted_intents: Set[str],
     stage_advanced: bool,
     is_repetitive: bool,
     is_stalling: bool,
-    prev_step_was_wrong: bool,
-) -> Tuple[float, float]:
+    prev_step_was_wrong: bool,  # kept for API compat
+    task_name: str = "",
+    stage_name: str = "",
+    stage_index: int = 0,
+) -> Tuple[float, float, float, float, str]:
     """
-    Compute step reward with partial credit and recovery.
-    Returns (step_reward, rule_score_component [0,1]).
-    """
-    reward = 0.0
+    Compute step reward using tri-partite formula.
+    Returns (step_reward, rule_score [0,1], completeness_score [0,1],
+             sequence_score [0,1], reason_string).
 
+    step_reward = final tri-partite score clamped to [0.0, 1.0].
+    rule_score  = backward-compat alias for step_reward (same value).
+    """
+    words = response_text.split()
+    reason_parts: List[str] = []
+
+    # ── 1. INTENT SCORE ──────────────────────────────────────────────────────
     if is_repetitive:
-        reward += _R_REPETITION
+        intent_score = 0.0
+        reason_parts.append("Repetitive response.")
     elif "off_topic" in intents and len(intents) == 1:
-        reward += _R_OFF_TOPIC
+        intent_score = 0.0
+        reason_parts.append("Response is off-topic.")
     else:
-        # Count how many detected intents are in the accepted set
         matching = intents_set & accepted_intents
         if len(matching) == 0:
-            # No overlap at all — but not off_topic (has some real intent)
-            reward += _R_WRONG_ACTION
+            intent_score = 0.1
+            reason_parts.append("Response doesn't match expected intent for this stage.")
         elif len(matching) >= 2 or (len(intents_set) == 1 and matching):
-            # All (or near-all) intents match
-            reward += _R_CORRECT_ACTION
+            intent_score = 1.0
         else:
-            # Some intents match (partial)
-            reward += _R_PARTIAL_ACTION
+            intent_score = 0.6
+            reason_parts.append("Partial intent match.")
 
-    # Stage advance bonus
-    if stage_advanced:
-        reward += _R_STAGE_ADVANCE
-
-    # Recovery bonus: good response after a wrong one
-    if prev_step_was_wrong and reward > 0 and not is_repetitive:
-        reward += _R_RECOVERY_BONUS
-
-    # Stall penalty (only if not advancing and not already penalized)
-    if is_stalling and not stage_advanced and reward >= _R_WRONG_ACTION:
-        reward += _R_STALL
-
-    # Normalize rule_score to [0,1] for grader quality dimension
-    # Range is roughly [-0.8, +1.0]; shift and scale
-    rule_score = min(1.0, max(0.0, (reward + 1.0) / 2.0))
-
-    return reward, rule_score
-
-
-def _compute_terminal_reward(
-    episode: "EpisodeState",
-    task: Dict[str, Any],
-) -> Tuple[float, bool, str]:
-    """
-    Compute terminal reward added only at the final step.
-    Returns (terminal_reward, success, failure_reason).
-    """
-    if episode.resolved and episode.closure_reached:
-        return _R_SUCCESS, True, ""
-
-    if episode.resolved and not episode.closure_reached:
-        # Partial success: resolved but didn't reach formal closure
-        # Now positive to credit the resolution
-        return _R_PARTIAL_RESOLVE, True, ""
-
-    # Not resolved — determine why
-    if episode.consecutive_failures >= episode.max_consecutive_failures:
-        reason = "consecutive_failures"
-    elif episode.consecutive_repetitions >= episode.max_consecutive_repetitions:
-        reason = "repetition_limit"
-    elif episode.steps_taken >= episode.max_steps:
-        reason = "max_steps_exceeded"
+    # ── 2. COMPLETENESS SCORE ────────────────────────────────────────────────
+    if is_repetitive:
+        completeness_score = 0.0
+        missing_fields: List[str] = []
     else:
-        reason = "unresolved"
+        completeness_score, missing_fields = check_completeness(
+            response_text, task_name, stage_name
+        )
+        # Vague / too-short response caps completeness at 0.3
+        if len(words) < 10:
+            completeness_score = min(completeness_score, 0.3)
+            # Also cap intent_score heavily for short, low-effort responses
+            intent_score = min(intent_score, 0.1)
+            reason_parts.append("Response is too brief or vague.")
+        
+        # If missing critical info, also cap intent_score
+        if completeness_score < 0.5:
+            intent_score = min(intent_score, 0.4)
 
-    return _R_FAILURE, False, reason
+        if missing_fields:
+            reason_parts.append(
+                "Missing: " + ", ".join(missing_fields) + "."
+            )
+
+    # ── 3. SEQUENCE SCORE ────────────────────────────────────────────────────
+    if is_repetitive:
+        sequence_score = 0.5
+        seq_reason = ""
+    else:
+        sequence_score, seq_reason = check_sequence(
+            response_text, task_name, stage_index
+        )
+        if seq_reason:
+            reason_parts.append(seq_reason)
+
+    # ── 4. TRI-PARTITE FORMULA ───────────────────────────────────────────────
+    final_score = (
+        0.4 * intent_score
+        + 0.4 * completeness_score
+        + 0.2 * sequence_score
+    )
+
+    # Stall penalty
+    if is_stalling and not stage_advanced:
+        final_score = max(0.0, final_score - 0.10)
+        reason_parts.append("Warning: stalling — not advancing stage.")
+
+    # Clamp
+    final_score = min(1.0, max(0.0, final_score))
+
+    # ── 5. BUILD REASON ──────────────────────────────────────────────────────
+    if not reason_parts:
+        if completeness_score >= 0.9 and intent_score >= 0.9:
+            reason = "Correct and complete response."
+        elif completeness_score >= 0.5:
+            reason = "Response follows correct intent."
+        else:
+            reason = "Response partially addresses customer needs."
+    else:
+        reason = " ".join(reason_parts)
+
+    # rule_score equals final_score for backward compat with grader
+    rule_score = final_score
+
+    return final_score, rule_score, completeness_score, sequence_score, reason
+
+
+def _build_reward_reason(
+    success: bool,
+    closure_reached: bool,
+    failure_reason: str,
+) -> str:
+    """
+    Build a human-readable explanation of the episode reward.
+    """
+    if success and closure_reached:
+        return "Resolved with closure"
+    if success:
+        return "Resolved without formal closure"
+    reason_map = {
+        "consecutive_failures": "Too many consecutive wrong responses",
+        "repetition_limit":     "Repeated responses exceeded limit",
+        "max_steps_exceeded":   "Maximum steps reached without resolution",
+        "unresolved":           "Issue was not resolved",
+    }
+    return reason_map.get(failure_reason, f"Unresolved: {failure_reason}")
+
+
+def _determine_failure_reason(episode: "EpisodeState") -> str:
+    """Determine why the episode ended without full success."""
+    if episode.consecutive_failures >= episode.max_consecutive_failures:
+        return "consecutive_failures"
+    if episode.consecutive_repetitions >= episode.max_consecutive_repetitions:
+        return "repetition_limit"
+    if episode.steps_taken >= episode.max_steps:
+        return "max_steps_exceeded"
+    return "unresolved"
 
 
 # ===========================================================================
@@ -964,16 +1283,17 @@ def _evolve_mood(
 
 class CustomerSupportEnvironment(Environment):
     """
-    Multi-step, stateful Customer Support Resolution Environment (v4 — Flexible).
+    Multi-step, stateful Customer Support Resolution Environment (v5 — Normalized Reward).
 
-    Key improvements over v3:
+    Key properties:
     - Multi-intent classification (agent responses carry multiple intents)
     - Partial credit rewards (graded tiers instead of binary)
-    - Recovery mechanism (bonus for recovering from a wrong step)
     - Stage-skip for strong responses (skip minor stages)
     - Relaxed failure thresholds (4 failures, 3 repetitions)
-    - Positive terminal reward for partial resolution
-    - Hybrid grader: 0.85 * rule + 0.15 * llm
+    - Pure rule-based grader (no LLM calls, fully deterministic)
+    - Normalized reward: always in [0.0, 1.0]
+    - reward == grader_score at episode end (perfect alignment)
+    - reward_reason explains the final score in plain language
     """
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
@@ -1053,12 +1373,10 @@ class CustomerSupportEnvironment(Environment):
             intents_detected=[],
             hints=hints,
             rule_score=0.0,
-            llm_score=0.0,
-            stage_reward=0.0,
-            final_reward=0.0,
             grader_score=0.0,
             done=False,
             reward=0.0,
+            reward_reason="",
             success=False,
             repetition_count=0,
             stall_count=0,
@@ -1180,72 +1498,75 @@ class CustomerSupportEnvironment(Environment):
         else:
             ep.customer_mood = _evolve_mood(ep.customer_mood, intents, stage_advanced, stage_accepted)
 
-        # ── 7. COMPUTE STEP REWARD (partial credit + recovery) ───────────────
-        step_reward, rule_score = _compute_step_reward(
-            intents=intents,
-            intents_set=intents_set,
-            accepted_intents=accepted_intents,
-            stage_advanced=stage_advanced,
-            is_repetitive=rep_flag,
-            is_stalling=is_stalling,
-            prev_step_was_wrong=ep.prev_step_was_wrong,
+        # ── 7. COMPUTE STEP REWARD (tri-partite: intent + completeness + sequence) ──
+        step_reward, rule_score, completeness_score, sequence_score, step_reason = (
+            _compute_step_reward(
+                response_text=agent_response,
+                intents=intents,
+                intents_set=intents_set,
+                accepted_intents=accepted_intents,
+                stage_advanced=stage_advanced,
+                is_repetitive=rep_flag,
+                is_stalling=is_stalling,
+                prev_step_was_wrong=ep.prev_step_was_wrong,
+                task_name=self._task_name,
+                stage_name=ep.stage_name,
+                stage_index=ep.stage_index,
+            )
         )
 
         # Track for next-step recovery
         ep.prev_step_was_wrong = (not stage_accepted and not rep_flag)
 
-        stage_reward_val = _R_STAGE_ADVANCE if stage_advanced else 0.0
-
         # ── 8. RECORD TRAJECTORY STEP ─────────────────────────────────────────
         ep.trajectory.append({
-            "step":           ep.steps_taken,
-            "intent":         primary_intent,
-            "intents":        intents,
-            "stage":          ep.stage_name,
-            "stage_accepted": stage_accepted,
-            "stage_advanced": stage_advanced,
-            "is_repetitive":  rep_flag,
-            "is_stalling":    is_stalling,
-            "rule_score":     rule_score,
-            "reward":         step_reward,
-            "mood":           ep.customer_mood,
+            "step":               ep.steps_taken,
+            "intent":             primary_intent,
+            "intents":            intents,
+            "stage":              ep.stage_name,
+            "stage_accepted":     stage_accepted,
+            "stage_advanced":     stage_advanced,
+            "is_repetitive":      rep_flag,
+            "is_stalling":        is_stalling,
+            "rule_score":         rule_score,
+            "completeness_score": completeness_score,
+            "sequence_score":     sequence_score,
+            "reward":             step_reward,
+            "mood":               ep.customer_mood,
+            "step_reason":        step_reason,
         })
 
         # ── 9. CHECK ALL FAILURE / DONE CONDITIONS ────────────────────────────
         is_final_step = ep.done
 
-        # ── 10. TERMINAL REWARD + GRADER (only at episode end) ────────────────
-        llm_score = 0.0
+        # ── 10. GRADER + NORMALIZED REWARD (computed at episode end) ──────────
         grader_score = 0.0
-        terminal_reward = 0.0
         success = False
         failure_reason = ""
-
-        # Damaged product: no-apology penalty (applied ONCE at final step only)
-        no_apology_penalty = 0.0
-        if (
-            self._task_name == "damaged_product"
-            and is_final_step
-            and ep.steps_taken >= self._task.get("no_apology_by_step", 3)
-            and not ep.had_apology
-        ):
-            no_apology_penalty = _R_NO_APOLOGY
+        reward_reason = ""
 
         if is_final_step:
-            terminal_reward, success, failure_reason = _compute_terminal_reward(ep, self._task)
+            # Determine success and failure reason
+            success = ep.resolved  # resolved (with or without closure) counts as success
+            if ep.resolved and ep.closure_reached:
+                failure_reason = ""
+            elif ep.resolved:
+                failure_reason = ""
+            else:
+                failure_reason = _determine_failure_reason(ep)
             ep.failure_reason = failure_reason
 
-            # LLM judge — contributes 15% to grader
-            llm_score = _llm_judge_score(
-                task_description=self._task["description"],
-                conversation_history=self._conversation_history,
-                final_response=agent_response,
-            )
+            # No-apology trajectory penalty for damaged_product tasks
+            if (
+                self._task_name == "damaged_product"
+                and ep.steps_taken >= self._task.get("no_apology_by_step", 3)
+                and not ep.had_apology
+            ):
+                # Retroactively reduce avg rule_score in trajectory by a small factor
+                for t in ep.trajectory:
+                    t["rule_score"] = max(0.0, t["rule_score"] - 0.05)
 
-            # Update final step in trajectory with terminal reward and no-apology penalty
-            ep.trajectory[-1]["reward"] = step_reward + terminal_reward + no_apology_penalty
-
-            # Hybrid grader (0.85 rule + 0.15 llm)
+            # Pure rule-based grader — deterministic, no LLM
             grader_score = grade_episode(
                 trajectory=ep.trajectory,
                 final_stage=ep.stage_name,
@@ -1255,15 +1576,17 @@ class CustomerSupportEnvironment(Environment):
                 steps_taken=ep.steps_taken,
                 max_steps=ep.max_steps,
                 step_rewards=[t["reward"] for t in ep.trajectory],
-                llm_score=llm_score,
             )
 
-        # Final reward = step reward + terminal reward + penalties (at end only)
-        total_step_reward = (
-            step_reward
-            + (terminal_reward if is_final_step else 0.0)
-            + (no_apology_penalty if is_final_step else 0.0)
-        )
+            reward_reason = _build_reward_reason(success, ep.closure_reached, failure_reason)
+
+        # ── Normalized reward ─────────────────────────────────────────────────
+        # Final step: reward = grader_score (perfect alignment, bounded [0,1])
+        # Other steps: reward = max(0.0, step_reward) — small positive signal only
+        if is_final_step:
+            reward_out = grader_score
+        else:
+            reward_out = max(0.0, step_reward)
 
         # ── 11. NEXT CUSTOMER MESSAGE ──────────────────────────────────────────
         self._script_index += 1
@@ -1282,6 +1605,15 @@ class CustomerSupportEnvironment(Environment):
             if hint_text:
                 hints = [hint_text]
 
+        # Final failure reason assignment
+        out_failure_reason = ""
+        if is_final_step:
+            out_failure_reason = failure_reason
+        elif rep_flag:
+            out_failure_reason = "Repetitive content detected"
+        elif is_stalling:
+            out_failure_reason = "Warning: Approaching stall limit"
+
         return CustomerSupportObservation(
             customer_message=next_message,
             conversation_history=list(self._conversation_history),
@@ -1297,16 +1629,14 @@ class CustomerSupportEnvironment(Environment):
             intents_detected=intents,
             hints=hints,
             rule_score=rule_score,
-            llm_score=llm_score,
-            stage_reward=stage_reward_val,
-            final_reward=total_step_reward,
             grader_score=grader_score,
             done=is_final_step,
-            reward=total_step_reward,
+            reward=reward_out,
+            reward_reason=reward_reason if is_final_step else step_reason,
             success=success,
             repetition_count=ep.consecutive_repetitions,
             stall_count=ep.stall_steps,
-            failure_reason=failure_reason if is_final_step else "",
+            failure_reason=out_failure_reason,
             task_context=self._task.get("context"),
         )
 

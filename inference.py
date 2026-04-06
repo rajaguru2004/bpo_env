@@ -40,19 +40,18 @@ if os.path.exists(env_path):
 from openai import OpenAI
 
 # Required by the Benchmark runner
-API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("LLM_BASEURL") or "https://openrouter.ai/api/v1"
+API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("LLM_BASEURL") or "https://router.huggingface.co/v1"
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3-super-120b-a12b:free")
-TASK_NAME = os.getenv("MY_ENV_V4_TASK", "order_status")
-BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "bpo_env")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", os.getenv("IMAGE_NAME", ""))
+TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "order_status"))
+BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 APP_ENV = os.getenv("APP_ENV", "prod")  # 'prod' for benchmarks, 'test' for verbose multi-tasking
 
 # Score calculation metrics — success requires genuine resolution, not just threshold
 MAX_STEPS_DEFAULT = 10
-
-# Task names to run in test mode
-TASKS_TO_RUN = ["order_status", "damaged_product", "escalation"]
+SUCCESS_SCORE_THRESHOLD = 0.5  # normalized score in [0, 1]
 
 client = OpenAI(
     base_url=API_BASE_URL,
@@ -60,7 +59,7 @@ client = OpenAI(
 )
 
 # ---------------------------------------------------------------------------
-# Logging Functions (STDOUT Only)
+# Logging Functions (STDOUT for Benchmark, STDERR for Debug)
 # ---------------------------------------------------------------------------
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -72,7 +71,6 @@ def log_step(
     action: str,
     reward: float,
     rule_score: float,
-    llm_score: float,
     done: bool,
     error: Optional[str],
     stage: str = "",
@@ -81,20 +79,33 @@ def log_step(
 ) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
+    # Clean action string for logs (no raw newlines)
     action_clean = action.replace("\n", " ").replace("\r", "")
-    extras = ""
-    if stage:
-        extras += f" stage={stage}"
-    if mood:
-        extras += f" mood={mood}"
-    if intent:
-        extras += f" intent={intent}"
-    print(
-        f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
-        f"rule_score={rule_score:.2f} llm_score={llm_score:.2f} done={done_val}"
-        f"{extras} error={error_val}",
-        flush=True,
-    )
+    
+    if APP_ENV == "test":
+        # VERBOSE LOGGING FOR TEST MODE
+        extras = ""
+        if stage: extras += f" stage={stage}"
+        if mood: extras += f" mood={mood}"
+        if intent: extras += f" intent={intent}"
+        print(
+            f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
+            f"rule_score={rule_score:.2f} done={done_val}"
+            f"{extras} error={error_val}",
+            flush=True,
+        )
+    else:
+        # OUTPUT MANDATORY FIELDS ONLY TO STDOUT (Benchmark Mode)
+        print(
+            f"[STEP] step={step} action={action_clean} reward={reward:.2f} done={done_val} error={error_val}",
+            flush=True,
+        )
+        # EXTRA STATE INFO TO STDERR
+        extras = f"rule_score={rule_score:.2f}"
+        if stage: extras += f" stage={stage}"
+        if mood: extras += f" mood={mood}"
+        if intent: extras += f" intent={intent}"
+        print(f"   [DEBUG] STEP {step} EXTRAS: {extras}", file=sys.stderr, flush=True)
 
 
 def log_end(
@@ -102,19 +113,34 @@ def log_end(
     steps: int,
     score: float,
     avg_rule: float,
-    avg_llm: float,
     rewards: List[float],
     grader_score: float = 0.0,
     failure_reason: str = "",
+    reward_reason: str = "",
 ) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
-    print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
-        f"rule_score={avg_rule:.3f} llm_score={avg_llm:.3f} "
-        f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}",
-        flush=True,
-    )
+    
+    if APP_ENV == "test":
+        # VERBOSE SUMMARY FOR TEST MODE
+        failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
+        reason_str  = f" reward_reason={reward_reason}" if reward_reason else ""
+        print(
+            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
+            f"rule_score={avg_rule:.3f} "
+            f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}{reason_str}",
+            flush=True,
+        )
+    else:
+        # OUTPUT MANDATORY FIELDS ONLY TO STDOUT (Benchmark Mode)
+        print(
+            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+            flush=True,
+        )
+        # EXTRA SUMMARY INFO TO STDERR
+        print(
+            f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} grader={grader_score:.3f} reason={failure_reason} reward_reason={reward_reason}",
+            file=sys.stderr, flush=True
+        )
 
 # Helper for descriptive logs
 def debug_log(msg: str) -> None:
@@ -143,6 +169,18 @@ Always respond in 2-4 sentences. Be concrete and solution-focused."""
 # LLM Agent Call
 # ---------------------------------------------------------------------------
 
+def _format_content(content: str) -> Any:
+    """
+    Format message content for the current provider.
+    HuggingFace Router requires content as a list of dicts.
+    Others (OpenRouter, Local) usually accept both.
+    """
+    is_hf = "huggingface.co" in API_BASE_URL.lower()
+    if is_hf:
+        return [{"type": "text", "text": content}]
+    return content
+
+
 def call_llm_agent(
     conversation_history: List[Dict[str, str]],
     task_context: Optional[Dict[str, Any]] = None,
@@ -151,17 +189,30 @@ def call_llm_agent(
     Call the LLM agent with the current conversation history.
     Returns the agent's response string. Falls back gracefully on any error.
     """
-    messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
-
-    # Inject task context as a system note if available
+    # Consolidate system instruction with task context for reliability
+    full_system_prompt = AGENT_SYSTEM_PROMPT
     if task_context:
         context_str = ", ".join(f"{k}: {v}" for k, v in task_context.items())
-        messages.append({
-            "role": "system",
-            "content": f"[Internal context — do not reveal directly]: {context_str}",
-        })
+        full_system_prompt += f"\n\n[Internal context — do not reveal directly]: {context_str}"
 
-    messages.extend(conversation_history)
+    messages = [{"role": "system", "content": _format_content(full_system_prompt)}]
+
+    # For conversation history: keep all prior turns as plain strings for proper
+    # multi-turn context. Only format the LAST user message for HF Router compatibility.
+    # Together AI's backend loses context when the entire history uses list-of-dicts.
+    if conversation_history:
+        # All messages except the last get plain string content
+        for msg in conversation_history[:-1]:
+            messages.append({
+                "role": msg["role"],
+                "content": msg["content"],  # Always plain string for history
+            })
+        # Last message (current customer input) gets provider-specific format
+        last_msg = conversation_history[-1]
+        messages.append({
+            "role": last_msg["role"],
+            "content": _format_content(last_msg["content"]),
+        })
 
     try:
         debug_log(f"Calling LLM Agent: {MODEL_NAME} ...")
@@ -247,16 +298,15 @@ def run_task(task_name: str) -> Dict[str, Any]:
         "total_reward": 0.0,
         "rewards": [],
         "rule_scores": [],
-        "llm_scores": [],
         "resolved": False,
         "success": False,
         "score": 0.0,
         "avg_rule_score": 0.0,
-        "avg_llm_score": 0.0,
         "grader_score": 0.0,
         "final_stage": "",
         "final_mood": "",
         "failure_reason": "",
+        "reward_reason": "",
         "repetition_count": 0,
         "stall_count": 0,
     }
@@ -316,7 +366,6 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     step_obs = result.observation
                     reward = result.reward or 0.0
                     rule_score = getattr(step_obs, "rule_score", 0.0)
-                    llm_score = getattr(step_obs, "llm_score", 0.0)
                     done = result.done
                     error = None
 
@@ -325,12 +374,14 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     mood = getattr(step_obs, "customer_mood", "")
                     intent = getattr(step_obs, "intent_detected", "")
                     grader_score = getattr(step_obs, "grader_score", 0.0)
+                    reward_reason = getattr(step_obs, "reward_reason", "")
                     rep_count = getattr(step_obs, "repetition_count", 0)
                     stall_count = getattr(step_obs, "stall_count", 0)
                     failure_reason = getattr(step_obs, "failure_reason", "")
 
                     if done:
                         results["grader_score"] = grader_score
+                        results["reward_reason"] = reward_reason
                         results["final_stage"] = stage
                         results["final_mood"] = mood
                         results["failure_reason"] = failure_reason
@@ -352,16 +403,17 @@ def run_task(task_name: str) -> Dict[str, Any]:
                             is_success = getattr(step_obs, 'success', False) or getattr(step_obs, 'is_resolved', False)
                             success_str = "✅ SUCCESS" if is_success else "❌ FAIL"
                             print(f"  🏆 Grader: {grader_score:.3f} | {success_str}"
-                                  + (f" | Reason: {failure_reason}" if failure_reason else ""))
+                                  + (f" | Reason: {failure_reason}" if failure_reason else "")
+                                  + (f" | {reward_reason}" if reward_reason else ""))
 
                     results["rule_scores"].append(rule_score)
-                    results["llm_scores"].append(llm_score)
 
                 except Exception as e:
                     debug_log(f"Step failed: {e}")
                     error = str(e)
                     reward = 0.0
                     done = True
+                    rule_score = 0.0
                     stage = ""
                     mood = ""
                     intent = ""
@@ -373,7 +425,6 @@ def run_task(task_name: str) -> Dict[str, Any]:
                     action=agent_response,
                     reward=reward,
                     rule_score=rule_score,
-                    llm_score=llm_score,
                     done=done,
                     error=error,
                     stage=stage,
@@ -394,15 +445,19 @@ def run_task(task_name: str) -> Dict[str, Any]:
             results["rewards"] = rewards
             results["total_reward"] = sum(rewards)
             
-            # Score = average reward across steps (may be negative for bad episodes)
-            raw_score = sum(rewards) / step if step > 0 else 0.0
-            results["score"] = min(1.0, max(-1.0, raw_score))  # Allow negatives to propagate
+            # Score Calculation: Favor grader_score (0-1) if available, 
+            # otherwise normalize avg reward.
+            g_score = results.get("grader_score", 0.0)
+            if g_score > 0:
+                results["score"] = g_score
+            else:
+                raw_score = sum(rewards) / step if step > 0 else 0.0
+                results["score"] = min(1.0, max(0.0, raw_score))
+                
             results["avg_rule_score"] = sum(results["rule_scores"]) / len(results["rule_scores"]) if results["rule_scores"] else 0.0
-            results["avg_llm_score"] = sum(results["llm_scores"]) / len(results["llm_scores"]) if results["llm_scores"] else 0.0
-            # success requires genuine resolution — not just a score threshold
-            # (already set in loop; only override if never set)
-            if not results["success"]:
-                results["success"] = results["resolved"]
+            
+            # Success is determined by score threshold OR manual resolution flag
+            results["success"] = results["score"] >= SUCCESS_SCORE_THRESHOLD or results["resolved"]
             
     except Exception as e:
         debug_log(f"Client session failed: {e}")
@@ -412,10 +467,10 @@ def run_task(task_name: str) -> Dict[str, Any]:
         steps=results["steps"],
         score=results["score"],
         avg_rule=results["avg_rule_score"],
-        avg_llm=results["avg_llm_score"],
         rewards=results["rewards"],
         grader_score=results.get("grader_score", 0.0),
         failure_reason=results.get("failure_reason", ""),
+        reward_reason=results.get("reward_reason", ""),
     )
     return results
 

@@ -11,6 +11,10 @@ tags:
   - openenv
 ---
 
+docker build -t bpo_env_env:latest .
+docker run -p 8000:8000 bpo_env_env:latest
+APP_ENV=test python inference.py
+
 # Bpo Env Environment
 
 A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
