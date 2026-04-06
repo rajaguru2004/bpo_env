@@ -1095,7 +1095,7 @@ def _compute_step_reward(
             reason_parts.append(seq_reason)
 
     # ── 4. TRI-PARTITE FORMULA ───────────────────────────────────────────────
-    final_score = (
+    tripartite_score = (
         0.4 * intent_score
         + 0.4 * completeness_score
         + 0.2 * sequence_score
@@ -1103,138 +1103,130 @@ def _compute_step_reward(
 
     # Stall penalty
     if is_stalling and not stage_advanced:
-        final_score = max(0.0, final_score - 0.10)
+        tripartite_score = max(0.0, tripartite_score - 0.10)
         reason_parts.append("Warning: stalling — not advancing stage.")
 
     # Clamp
-    final_score = min(1.0, max(0.0, final_score))
+    tripartite_score = min(1.0, max(0.0, tripartite_score))
+
+    # rule_score = the pure tripartite score (stage-machine fidelity signal).
+    # This reflects ONLY intent classification + completeness + sequence.
+    # It does NOT include confidence bonuses, so it truly varies per step.
+    rule_score = tripartite_score
 
     # --- v8 PATCH: CONFIDENCE-AWARE REWARD ADJUSTMENTS (Steps 3-10) ---
+    # step_reward starts from the tripartite base and is then tuned by the
+    # confidence-aware intent extractor. It is the RL training signal.
+    step_reward = tripartite_score
+
     if detected_intents_dict:
-        reward = final_score
         penalties_log: List[str] = []
         bonuses_log:   List[str] = []
 
         # ── STEP 4: Soft penalties with floor protection ──────────────────
-        # STEP 4a: Repetitive penalty (was -0.3, now -0.15)
+        # STEP 4a: Repetitive penalty
         if is_repetitive:
-            reward -= 0.15
+            step_reward -= 0.15
             penalties_log.append("repetitive:-0.15")
 
-        # STEP 4b: Stalling penalty (was 0.2*stall_count, now 0.1*stall_count)
+        # STEP 4b: Stalling penalty
         if is_stalling and stall_count > 0:
             stall_pen = 0.1 * stall_count
-            reward -= stall_pen
+            step_reward -= stall_pen
             penalties_log.append(f"stalling:-{stall_pen:.2f}")
 
-        # ── Missing required intents penalty (was -0.25, now -0.15) ──────
+        # ── Missing required intents penalty ──────────────────────────────
         reqs = TASK_REQUIREMENTS.get(task_name, {}).get("required", [])
         for req_intent in reqs:
             intent_data = detected_intents_dict.get(req_intent, {})
-            # STEP 3: confidence-based check
             if not intent_data.get("present", False):
-                reward -= 0.15  # STEP 4: was 0.25, now 0.15
+                step_reward -= 0.15
                 penalties_log.append(f"missing_{req_intent}:-0.15")
 
-        # ── STEP 3 + POSITIVE BONUSES (confidence-weighted) ──────────────
+        # ── Positive bonuses (confidence-weighted) ────────────────────────
         for req_intent in reqs:
             intent_data = detected_intents_dict.get(req_intent, {})
             if intent_data.get("present", False):
-                bonus = 0.15 * intent_data.get("confidence", 1.0)  # STEP 3
-                reward += bonus
+                bonus = 0.15 * intent_data.get("confidence", 1.0)
+                step_reward += bonus
                 bonuses_log.append(f"{req_intent}:+{bonus:.2f}")
 
         # ── Closure bonus (confidence-weighted, near-end only) ────────────
         closure_data = detected_intents_dict.get("closure", {})
         if closure_data.get("present", False) and stage_name == "closure":
             bonus = 0.1 * closure_data.get("confidence", 1.0)
-            reward += bonus
+            step_reward += bonus
             bonuses_log.append(f"closure:+{bonus:.2f}")
 
-        # ── STEP 4: Soft floor (non-off-topic actions get at least 0.1) ──
+        # ── Soft floor (non-off-topic actions get at least 0.1) ──────────
         off_topic_data = detected_intents_dict.get("off_topic", {})
         if not off_topic_data.get("present", False):
-            reward = max(reward, 0.1)
+            step_reward = max(step_reward, 0.1)
 
-        # ── STEP 7: Off-topic — confidence-gated hard reset ──────────────
-        # (replaces old hard: if off_topic: reward = 0)
+        # ── Off-topic — confidence-gated penalty ──────────────────────────
         if off_topic_data.get("present", False):
             off_conf = off_topic_data.get("confidence", 0.0)
             if off_conf > 0.8:
-                reward = 0.0
+                step_reward = 0.0
                 penalties_log.append(f"off_topic_hard(conf={off_conf:.2f}):->0.0")
             else:
-                reward = min(reward, 0.2)
+                step_reward = min(step_reward, 0.2)
                 penalties_log.append(f"off_topic_soft(conf={off_conf:.2f}):cap_0.2")
 
-        # ── STEP 4c: Critical empathy check (reduced from -0.4 to -0.25) ─
+        # ── Critical empathy check ────────────────────────────────────────
         if "empathy" in reqs:
             empathy_data = detected_intents_dict.get("empathy", {})
             if stage_name == "start" and not empathy_data.get("present", False):
-                reward -= 0.25  # was -0.4, now softer
+                step_reward -= 0.25
                 penalties_log.append("missing_empathy_at_start:-0.25")
-                # Soft floor re-apply after this hard check
                 if not off_topic_data.get("present", False):
-                    reward = max(reward, 0.1)
+                    step_reward = max(step_reward, 0.1)
 
-        # ── STEP 5: Protect valid critical actions ────────────────────────
+        # ── Protect valid critical actions ────────────────────────────────
         escalation_data = detected_intents_dict.get("escalation", {})
         refund_data     = detected_intents_dict.get("refund", {})
         replace_data    = detected_intents_dict.get("replacement", {})
 
         if escalation_data.get("present") and escalation_data.get("confidence", 0) > 0.7:
-            reward = max(reward, 0.5)
-            bonuses_log.append(f"escalation_guard:min_0.5")
+            step_reward = max(step_reward, 0.5)
+            bonuses_log.append("escalation_guard:min_0.5")
         if refund_data.get("present") and refund_data.get("confidence", 0) > 0.7:
-            reward = max(reward, 0.6)
-            bonuses_log.append(f"refund_guard:min_0.6")
+            step_reward = max(step_reward, 0.6)
+            bonuses_log.append("refund_guard:min_0.6")
         if replace_data.get("present") and replace_data.get("confidence", 0) > 0.7:
-            reward = max(reward, 0.6)
-            bonuses_log.append(f"replacement_guard:min_0.6")
+            step_reward = max(step_reward, 0.6)
+            bonuses_log.append("replacement_guard:min_0.6")
 
-        # ── STEP 6: Stage progression reward (+0.2 additive) ─────────────
+        # ── Stage progression reward (+0.15 additive) ─────────────────────
         expected_flow = EXPECTED_FLOW.get(task_name, [])
         if stage_name and stage_advanced and len(expected_flow) > 1:
             try:
                 current_idx = expected_flow.index(stage_name)
-                # stage_advanced means we just moved to stage_name;
-                # check it follows the expected next step
                 if current_idx > 0:  # not the very first stage
-                    reward += 0.2
-                    bonuses_log.append("correct_stage_progression:+0.20")
+                    step_reward += 0.15
+                    bonuses_log.append("correct_stage_progression:+0.15")
             except ValueError:
-                pass  # stage not in expected_flow, no bonus
+                pass
 
-        # ── STEP 8: Partial credit for empathy/useful-info ────────────────
+        # ── Partial credit for empathy/useful-info ────────────────────────
         empathy_d = detected_intents_dict.get("empathy", {})
         apology_d = detected_intents_dict.get("apology", {})
         if empathy_d.get("present") or apology_d.get("present"):
-            reward += 0.1
-            bonuses_log.append("empathy_or_apology:+0.10")
+            step_reward += 0.05
+            bonuses_log.append("empathy_or_apology:+0.05")
 
         tracking_d = detected_intents_dict.get("tracking_info", {})
-        if (tracking_d.get("present") or refund_data.get("present") or replace_data.get("present")):
-            reward += 0.2
-            bonuses_log.append("useful_info:+0.20")
+        if tracking_d.get("present") or refund_data.get("present") or replace_data.get("present"):
+            step_reward += 0.10
+            bonuses_log.append("useful_info:+0.10")
 
-        # ── STEP 9: Normalize final reward ───────────────────────────────
-        reward = min(1.0, reward)
-        reward = max(0.0, reward)
+        # ── Normalize step_reward ─────────────────────────────────────────
+        step_reward = min(1.0, max(0.0, step_reward))
 
-        final_score = reward
-
-        # ── STEP 10: Enhanced debug logging ───────────────────────────────
-        intent_summary = {
-            k: f"{'Y' if v.get('present') else 'N'}({v.get('confidence', 0):.2f})"
-            for k, v in detected_intents_dict.items()
-        }
-        print(
-            f"\n[DEBUG]\n"
-            f"  Intents (present/conf): {intent_summary}\n"
-            f"  Penalties applied: {penalties_log}\n"
-            f"  Bonuses applied:   {bonuses_log}\n"
-            f"  Final reward: {final_score:.3f}"
-        )
+    else:
+        step_reward = tripartite_score
+        penalties_log = []
+        bonuses_log = []
 
     # ── 5. BUILD REASON ──────────────────────────────────────────────────────
     if not reason_parts:
@@ -1247,10 +1239,7 @@ def _compute_step_reward(
     else:
         reason = " ".join(reason_parts)
 
-    # rule_score equals final_score for backward compat with grader
-    rule_score = final_score
-
-    return final_score, rule_score, completeness_score, sequence_score, reason
+    return step_reward, rule_score, completeness_score, sequence_score, reason
 
 
 def _build_reward_reason(
@@ -1711,13 +1700,8 @@ class CustomerSupportEnvironment(Environment):
             if _missing_required and reward_out > 0.6:
                 reward_out = 0.6
 
-        # STEP 7: Debug logging
-        print(
-            f"[DEBUG] Required intents: {_required_intents}\n"
-            f"[DEBUG] Collected intents: {ep.collected_intents}\n"
-            f"[DEBUG] Missing required:  {_missing_required}\n"
-            f"[DEBUG] Final reward after cap: {reward_out:.3f}"
-        )
+        # Debug: Uncomment to trace reward caps during dev
+        # print(f"[DEBUG] Missing={_missing_required} → reward_out={reward_out:.3f}")
 
         # ── 11. NEXT CUSTOMER MESSAGE ──────────────────────────────────────────
         self._script_index += 1

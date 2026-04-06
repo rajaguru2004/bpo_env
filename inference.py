@@ -332,7 +332,7 @@ def run_task(task_name: str) -> Dict[str, Any]:
                 done = result.done
             except Exception as e:
                 debug_log(f"Reset failed: {e}")
-                log_end(success=False, steps=0, score=0.0, avg_rule=0.0, avg_llm=0.0, rewards=[])
+                log_end(success=False, steps=0, score=0.0, avg_rule=0.0, rewards=[])
                 return results
 
             if APP_ENV == "test":
@@ -445,14 +445,10 @@ def run_task(task_name: str) -> Dict[str, Any]:
             results["rewards"] = rewards
             results["total_reward"] = sum(rewards)
             
-            # Score Calculation: Favor grader_score (0-1) if available, 
-            # otherwise normalize avg reward.
-            g_score = results.get("grader_score", 0.0)
-            if g_score > 0:
-                results["score"] = g_score
-            else:
-                raw_score = sum(rewards) / step if step > 0 else 0.0
-                results["score"] = min(1.0, max(0.0, raw_score))
+            # Score = average per-step reward (independent of grader_score).
+            # grader_score is the separate episode-level evaluation from grade_episode().
+            raw_score = sum(rewards) / step if step > 0 else 0.0
+            results["score"] = min(1.0, max(0.0, raw_score))
                 
             results["avg_rule_score"] = sum(results["rule_scores"]) / len(results["rule_scores"]) if results["rule_scores"] else 0.0
             

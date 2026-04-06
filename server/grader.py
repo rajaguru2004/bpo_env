@@ -1,10 +1,12 @@
 """
-Pure Rule-Based Grader for the BPO Customer Support Environment — v6 (Completeness-Aware).
+Pure Rule-Based Grader for the BPO Customer Support Environment — v9 (Intent-Coverage Aware).
 
-Target: A good, capable agent should score 0.60–0.75.
-         Only an exceptional, complete, well-sequenced agent can approach 0.85+.
+Grader score is INDEPENDENT of per-step rewards (step_reward / rule_score).
+  - step_reward  = per-step RL signal (tripartite + confidence adjustments)
+  - rule_score   = per-step pure tripartite score (intent + completeness + sequence)
+  - grader_score = episode-level quality evaluation (this module)
 
-Components (all capped, no LLM blending):
+Components (all independent, no LLM blending):
 
   Resolution completeness  (0.0–0.45)  — primary signal
     resolved + closure reached : 0.45
@@ -13,24 +15,18 @@ Components (all capped, no LLM blending):
 
   Efficiency               (0.0–0.15)  — bell-curve, penalizes rushing
     Full credit only if steps ≥ 40% of max_steps.
-    Formula: speed_factor * 0.15 * (1 - ratio)
-      where speed_factor = min(ratio / 0.40, 1.0)
 
-  Customer mood            (0.0–0.10)  — reduced ceiling
+  Customer mood            (0.0–0.10)
     satisfied : 0.10  |  neutral : 0.05  |  angry : 0.00
 
   Response quality         (0.0–0.15)  — avg completeness_score across trajectory
-    derived from check_completeness() — penalizes vague/missing-info responses
-    (falls back to avg rule_score if completeness_score not in trajectory)
 
-TOTAL MAX = 0.45 + 0.15 + 0.10 + 0.15 = 0.85
+  Intent coverage          (0.0–0.15)  — episode-level required-intent detection
+    Fraction of required intents confidently detected (≥0.5) at least once.
+    e.g. order_status needs tracking_info + delivery_info for full credit.
+
+TOTAL MAX = 0.45 + 0.15 + 0.10 + 0.15 + 0.15 = 1.00
 Result is clamped to [0.0, 1.0].
-
-Expected scores for a capable agent (complete responses, correct order):
-  order_status    (3/5 steps,  mood=satisfied, completeness≈0.90) → ~0.74
-  damaged_product (4/8 steps,  mood=satisfied, completeness≈0.80) → ~0.70
-  escalation      (5/12 steps, mood=satisfied, completeness≈0.85) → ~0.72
-  Average: ~0.72  ← nicely reflects strict-but-fair evaluation
 """
 
 from typing import Any, Dict, List
@@ -144,31 +140,35 @@ def grade_episode(
     else:
         quality_score = 0.0
 
-    # ── 5. Total (pure rule-based, no LLM blending) ──────────────────────────
-    total = resolution_score + efficiency_score + mood_score + quality_score
-
-    # --- v8 PATCH: ALIGN GRADER WITH CONFIDENCE-AWARE INTENTS ---
+    # ── 5. Intent coverage bonus (0.0–0.15) ─────────────────────────────────
+    # Rewards episode-level coverage of required intents using the
+    # confidence-aware detected_intents stored in each trajectory step.
+    # Distinct from step rewards: measures whether the WHOLE episode
+    # addressed every required signal at least once (confidence >= 0.5).
     if required_intents:
         score_count = 0
         for ri in required_intents:
-            # Handle both new {"present": bool, "confidence": float} format
-            # and old plain-bool format for backward compatibility.
             for t in trajectory:
                 raw = t.get("detected_intents", {}).get(ri)
                 if raw is None:
                     continue
                 if isinstance(raw, dict):
-                    if raw.get("present", False):
+                    if raw.get("present", False) and raw.get("confidence", 0.0) >= 0.5:
                         score_count += 1
                         break
                 elif raw:  # legacy bool
                     score_count += 1
                     break
 
-        intent_score = score_count / len(required_intents)
+        intent_coverage = score_count / len(required_intents)
+        intent_bonus = 0.15 * intent_coverage
+    else:
+        intent_bonus = 0.0
 
-        # Blend: 50% old score component, 50% new intent signal
-        total = 0.5 * total + 0.5 * intent_score
+    # ── 6. Total (pure rule-based, no LLM blending) ──────────────────────────
+    # Components:  resolution(0-0.45) + efficiency(0-0.15) + mood(0-0.10)
+    #              + quality(0-0.15)  + intent_bonus(0-0.15)  = MAX 1.00
+    total = resolution_score + efficiency_score + mood_score + quality_score + intent_bonus
 
     return min(1.0, max(0.0, total))
 
