@@ -54,9 +54,11 @@ if root_dir not in sys.path:
 try:
     from models import CustomerSupportAction, CustomerSupportObservation
     from server.grader import grade_episode
+    from server.intents import extract_intents, get_bridge_intents
 except ImportError:
     from ..models import CustomerSupportAction, CustomerSupportObservation
     from .grader import grade_episode
+    from .intents import extract_intents, get_bridge_intents
 
 
 # ===========================================================================
@@ -819,6 +821,30 @@ TASKS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+TASK_REQUIREMENTS = {
+    "order_status": {
+        "required": ["tracking_info", "delivery_info"],
+        "optional": ["empathy", "closure"]
+    },
+    "damaged_product": {
+        "required": ["empathy", "replacement"],
+        "optional": ["closure"]
+    },
+    "escalation": {
+        "required": ["empathy", "escalation", "refund"],
+        "optional": ["closure"]
+    }
+}
+
+# ---------------------------------------------------------------------------
+# STEP 6: Expected stage flow for progression reward
+# ---------------------------------------------------------------------------
+EXPECTED_FLOW: Dict[str, List[str]] = {
+    "order_status":   ["start", "inquiry", "resolution", "closure"],
+    "escalation":     ["start", "de_escalation", "acknowledgement", "resolution", "closure"],
+    "damaged_product":["start", "empathy", "diagnosis", "resolution", "closure"],
+}
+
 
 # ===========================================================================
 # LLM JUDGE (called ONCE per episode — contributes to grader hybrid score)
@@ -929,6 +955,16 @@ class EpisodeState:
     # Limits (loaded from task config)
     max_consecutive_failures: int = 4
     max_consecutive_repetitions: int = 3
+    # STEP 2: Episode-level intent accumulator — tracks which required intents
+    # have been confidently detected at least once during the episode.
+    collected_intents: Dict[str, bool] = field(default_factory=lambda: {
+        "tracking_info": False,
+        "delivery_info": False,
+        "empathy":        False,
+        "escalation":     False,
+        "refund":         False,
+        "replacement":    False,
+    })
 
     @property
     def current_stage(self) -> Dict[str, Any]:
@@ -991,6 +1027,8 @@ def _compute_step_reward(
     task_name: str = "",
     stage_name: str = "",
     stage_index: int = 0,
+    stall_count: int = 0,
+    detected_intents_dict: Dict[str, bool] = None,
 ) -> Tuple[float, float, float, float, str]:
     """
     Compute step reward using tri-partite formula.
@@ -1070,6 +1108,133 @@ def _compute_step_reward(
 
     # Clamp
     final_score = min(1.0, max(0.0, final_score))
+
+    # --- v8 PATCH: CONFIDENCE-AWARE REWARD ADJUSTMENTS (Steps 3-10) ---
+    if detected_intents_dict:
+        reward = final_score
+        penalties_log: List[str] = []
+        bonuses_log:   List[str] = []
+
+        # ── STEP 4: Soft penalties with floor protection ──────────────────
+        # STEP 4a: Repetitive penalty (was -0.3, now -0.15)
+        if is_repetitive:
+            reward -= 0.15
+            penalties_log.append("repetitive:-0.15")
+
+        # STEP 4b: Stalling penalty (was 0.2*stall_count, now 0.1*stall_count)
+        if is_stalling and stall_count > 0:
+            stall_pen = 0.1 * stall_count
+            reward -= stall_pen
+            penalties_log.append(f"stalling:-{stall_pen:.2f}")
+
+        # ── Missing required intents penalty (was -0.25, now -0.15) ──────
+        reqs = TASK_REQUIREMENTS.get(task_name, {}).get("required", [])
+        for req_intent in reqs:
+            intent_data = detected_intents_dict.get(req_intent, {})
+            # STEP 3: confidence-based check
+            if not intent_data.get("present", False):
+                reward -= 0.15  # STEP 4: was 0.25, now 0.15
+                penalties_log.append(f"missing_{req_intent}:-0.15")
+
+        # ── STEP 3 + POSITIVE BONUSES (confidence-weighted) ──────────────
+        for req_intent in reqs:
+            intent_data = detected_intents_dict.get(req_intent, {})
+            if intent_data.get("present", False):
+                bonus = 0.15 * intent_data.get("confidence", 1.0)  # STEP 3
+                reward += bonus
+                bonuses_log.append(f"{req_intent}:+{bonus:.2f}")
+
+        # ── Closure bonus (confidence-weighted, near-end only) ────────────
+        closure_data = detected_intents_dict.get("closure", {})
+        if closure_data.get("present", False) and stage_name == "closure":
+            bonus = 0.1 * closure_data.get("confidence", 1.0)
+            reward += bonus
+            bonuses_log.append(f"closure:+{bonus:.2f}")
+
+        # ── STEP 4: Soft floor (non-off-topic actions get at least 0.1) ──
+        off_topic_data = detected_intents_dict.get("off_topic", {})
+        if not off_topic_data.get("present", False):
+            reward = max(reward, 0.1)
+
+        # ── STEP 7: Off-topic — confidence-gated hard reset ──────────────
+        # (replaces old hard: if off_topic: reward = 0)
+        if off_topic_data.get("present", False):
+            off_conf = off_topic_data.get("confidence", 0.0)
+            if off_conf > 0.8:
+                reward = 0.0
+                penalties_log.append(f"off_topic_hard(conf={off_conf:.2f}):->0.0")
+            else:
+                reward = min(reward, 0.2)
+                penalties_log.append(f"off_topic_soft(conf={off_conf:.2f}):cap_0.2")
+
+        # ── STEP 4c: Critical empathy check (reduced from -0.4 to -0.25) ─
+        if "empathy" in reqs:
+            empathy_data = detected_intents_dict.get("empathy", {})
+            if stage_name == "start" and not empathy_data.get("present", False):
+                reward -= 0.25  # was -0.4, now softer
+                penalties_log.append("missing_empathy_at_start:-0.25")
+                # Soft floor re-apply after this hard check
+                if not off_topic_data.get("present", False):
+                    reward = max(reward, 0.1)
+
+        # ── STEP 5: Protect valid critical actions ────────────────────────
+        escalation_data = detected_intents_dict.get("escalation", {})
+        refund_data     = detected_intents_dict.get("refund", {})
+        replace_data    = detected_intents_dict.get("replacement", {})
+
+        if escalation_data.get("present") and escalation_data.get("confidence", 0) > 0.7:
+            reward = max(reward, 0.5)
+            bonuses_log.append(f"escalation_guard:min_0.5")
+        if refund_data.get("present") and refund_data.get("confidence", 0) > 0.7:
+            reward = max(reward, 0.6)
+            bonuses_log.append(f"refund_guard:min_0.6")
+        if replace_data.get("present") and replace_data.get("confidence", 0) > 0.7:
+            reward = max(reward, 0.6)
+            bonuses_log.append(f"replacement_guard:min_0.6")
+
+        # ── STEP 6: Stage progression reward (+0.2 additive) ─────────────
+        expected_flow = EXPECTED_FLOW.get(task_name, [])
+        if stage_name and stage_advanced and len(expected_flow) > 1:
+            try:
+                current_idx = expected_flow.index(stage_name)
+                # stage_advanced means we just moved to stage_name;
+                # check it follows the expected next step
+                if current_idx > 0:  # not the very first stage
+                    reward += 0.2
+                    bonuses_log.append("correct_stage_progression:+0.20")
+            except ValueError:
+                pass  # stage not in expected_flow, no bonus
+
+        # ── STEP 8: Partial credit for empathy/useful-info ────────────────
+        empathy_d = detected_intents_dict.get("empathy", {})
+        apology_d = detected_intents_dict.get("apology", {})
+        if empathy_d.get("present") or apology_d.get("present"):
+            reward += 0.1
+            bonuses_log.append("empathy_or_apology:+0.10")
+
+        tracking_d = detected_intents_dict.get("tracking_info", {})
+        if (tracking_d.get("present") or refund_data.get("present") or replace_data.get("present")):
+            reward += 0.2
+            bonuses_log.append("useful_info:+0.20")
+
+        # ── STEP 9: Normalize final reward ───────────────────────────────
+        reward = min(1.0, reward)
+        reward = max(0.0, reward)
+
+        final_score = reward
+
+        # ── STEP 10: Enhanced debug logging ───────────────────────────────
+        intent_summary = {
+            k: f"{'Y' if v.get('present') else 'N'}({v.get('confidence', 0):.2f})"
+            for k, v in detected_intents_dict.items()
+        }
+        print(
+            f"\n[DEBUG]\n"
+            f"  Intents (present/conf): {intent_summary}\n"
+            f"  Penalties applied: {penalties_log}\n"
+            f"  Bonuses applied:   {bonuses_log}\n"
+            f"  Final reward: {final_score:.3f}"
+        )
 
     # ── 5. BUILD REASON ──────────────────────────────────────────────────────
     if not reason_parts:
@@ -1337,10 +1502,17 @@ class CustomerSupportEnvironment(Environment):
         # Record agent turn in history
         self._conversation_history.append({"role": "assistant", "content": agent_response})
 
-        # ── 1. MULTI-INTENT CLASSIFICATION ──────────────────────────────────
-        intents: List[str] = classify_intents(agent_response)
+        # ── 1. MULTI-INTENT CLASSIFICATION (v7 Patch) ──────────────────────
+        # Use our new rule-based intent extractor (v7 patch)
+        detected_intents = extract_intents(agent_response, self._task_name)
+        
+        # Bridge to the original intent names for the state machine
+        intents = get_bridge_intents(detected_intents)
+        if not intents:
+            intents = ["off_topic"]
+            
         intents_set: Set[str] = set(intents)
-        primary_intent: str = intents[0]  # highest-priority intent for compat
+        primary_intent: str = intents[0]
 
         # ── 2. TRACK APOLOGY (damaged_product only) ──────────────────────────
         if "apology" in intents_set and not ep.had_apology:
@@ -1433,6 +1605,7 @@ class CustomerSupportEnvironment(Environment):
                 task_name=self._task_name,
                 stage_name=ep.stage_name,
                 stage_index=ep.stage_index,
+                detected_intents_dict=detected_intents,
             )
         )
 
@@ -1455,6 +1628,7 @@ class CustomerSupportEnvironment(Environment):
             "reward":             step_reward,
             "mood":               ep.customer_mood,
             "step_reason":        step_reason,
+            "detected_intents":   detected_intents,
         })
 
         # ── 9. CHECK ALL FAILURE / DONE CONDITIONS ────────────────────────────
@@ -1488,6 +1662,7 @@ class CustomerSupportEnvironment(Environment):
                     t["rule_score"] = max(0.0, t["rule_score"] - 0.05)
 
             # Pure rule-based grader — deterministic, no LLM
+            required_intents = TASK_REQUIREMENTS.get(self._task_name, {}).get("required", [])
             grader_score = grade_episode(
                 trajectory=ep.trajectory,
                 final_stage=ep.stage_name,
@@ -1497,6 +1672,7 @@ class CustomerSupportEnvironment(Environment):
                 steps_taken=ep.steps_taken,
                 max_steps=ep.max_steps,
                 step_rewards=[t["reward"] for t in ep.trajectory],
+                required_intents=required_intents,
             )
 
             reward_reason = _build_reward_reason(success, ep.closure_reached, failure_reason)
@@ -1508,6 +1684,40 @@ class CustomerSupportEnvironment(Environment):
             reward_out = grader_score
         else:
             reward_out = max(0.0, step_reward)
+
+        # ── STEP 2: Accumulate confirmed intents (confidence > 0.6) ───────────
+        for intent_name, intent_data in detected_intents.items():
+            if intent_data.get("present", False) and intent_data.get("confidence", 0.0) > 0.6:
+                if intent_name in ep.collected_intents:
+                    ep.collected_intents[intent_name] = True
+
+        # ── STEPS 3-7: Required-intent reward cap (constraint layer) ──────────
+        # This is a POST-PROCESSING cap only. It does NOT change reward logic;
+        # it prevents high rewards when critical intents were never addressed.
+        _required_intents = TASK_REQUIREMENTS.get(self._task_name, {}).get("required", [])
+        _missing_required = any(
+            not ep.collected_intents.get(intent, False)
+            for intent in _required_intents
+        )
+
+        # STEP 5: Only cap if reward is already high (> threshold) — does NOT
+        # penalize low/mid rewards from agents that are still progressing.
+        if is_final_step:
+            # STEP 4: Stricter cap at final evaluation
+            if _missing_required and reward_out > 0.5:
+                reward_out = 0.5
+        else:
+            # STEP 3: Soft cap during episode
+            if _missing_required and reward_out > 0.6:
+                reward_out = 0.6
+
+        # STEP 7: Debug logging
+        print(
+            f"[DEBUG] Required intents: {_required_intents}\n"
+            f"[DEBUG] Collected intents: {ep.collected_intents}\n"
+            f"[DEBUG] Missing required:  {_missing_required}\n"
+            f"[DEBUG] Final reward after cap: {reward_out:.3f}"
+        )
 
         # ── 11. NEXT CUSTOMER MESSAGE ──────────────────────────────────────────
         self._script_index += 1
@@ -1535,6 +1745,14 @@ class CustomerSupportEnvironment(Environment):
         elif is_stalling:
             out_failure_reason = "Warning: Approaching stall limit"
 
+        # Convert confidence-aware dict → plain bool dict for the schema-validated field.
+        # The full confidence dict (detected_intents) is stored in trajectory for
+        # internal reward use; the API-facing 'intents' field stays Dict[str, bool].
+        intents_bool: Dict[str, bool] = {
+            k: bool(v.get("present", False))
+            for k, v in detected_intents.items()
+        }
+
         return CustomerSupportObservation(
             customer_message=next_message,
             conversation_history=list(self._conversation_history),
@@ -1548,6 +1766,7 @@ class CustomerSupportEnvironment(Environment):
             issue_status=ep.issue_status,
             intent_detected=primary_intent,
             intents_detected=intents,
+            intents=intents_bool,
             hints=hints,
             rule_score=rule_score,
             grader_score=grader_score,

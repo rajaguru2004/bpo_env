@@ -15,6 +15,9 @@ docker build -t bpo_env_env:latest .
 docker run -p 8000:8000 bpo_env_env:latest
 APP_ENV=test python inference.py
 
+--task {order_status,damaged_product,escalation}
+python3 run_scenarios.py --url http://localhost:8000 --task order_status
+
 # Bpo Env Environment
 
 A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.

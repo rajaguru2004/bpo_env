@@ -80,6 +80,7 @@ def grade_episode(
     max_steps: int,
     step_rewards: List[float],
     llm_score: float = 0.0,  # kept for API compatibility, ignored
+    required_intents: List[str] = None,
 ) -> float:
     """
     Compute a calibrated rule-based episode score targeting [0.70, 0.80] for capable agents.
@@ -94,6 +95,7 @@ def grade_episode(
         max_steps:       Maximum steps allowed.
         step_rewards:    Per-step rewards (for compatibility, not used in this grader).
         llm_score:       Ignored. Kept for backwards-compatibility only.
+        required_intents: List of required intents for the task.
 
     Returns:
         Calibrated score in [0.0, 1.0].
@@ -144,7 +146,32 @@ def grade_episode(
 
     # ── 5. Total (pure rule-based, no LLM blending) ──────────────────────────
     total = resolution_score + efficiency_score + mood_score + quality_score
+
+    # --- v8 PATCH: ALIGN GRADER WITH CONFIDENCE-AWARE INTENTS ---
+    if required_intents:
+        score_count = 0
+        for ri in required_intents:
+            # Handle both new {"present": bool, "confidence": float} format
+            # and old plain-bool format for backward compatibility.
+            for t in trajectory:
+                raw = t.get("detected_intents", {}).get(ri)
+                if raw is None:
+                    continue
+                if isinstance(raw, dict):
+                    if raw.get("present", False):
+                        score_count += 1
+                        break
+                elif raw:  # legacy bool
+                    score_count += 1
+                    break
+
+        intent_score = score_count / len(required_intents)
+
+        # Blend: 50% old score component, 50% new intent signal
+        total = 0.5 * total + 0.5 * intent_score
+
     return min(1.0, max(0.0, total))
+
 
 
 def grade_step(

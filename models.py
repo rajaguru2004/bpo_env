@@ -79,6 +79,10 @@ class CustomerSupportObservation(Observation):
         default_factory=list,
         description="All intents detected in the agent's last response (multi-intent v4)",
     )
+    intents: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Detailed intent flags (v7 patch)",
+    )
     hints: List[str] = Field(
         default_factory=list,
         description="Optional guidance hints (populated on easy tasks to aid learning)",

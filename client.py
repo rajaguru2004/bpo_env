@@ -54,21 +54,27 @@ class CustomerSupportEnv(
             step=obs_data.get("step", 0),
             max_steps=obs_data.get("max_steps", 10),
             is_resolved=obs_data.get("is_resolved", False),
-            # ── State machine fields (NEW) ─────────────────────────────────
+            # ── State machine fields (v7 Patch) ────────────────────────────
             conversation_stage=obs_data.get("conversation_stage", "start"),
             customer_mood=obs_data.get("customer_mood", "neutral"),
             issue_status=obs_data.get("issue_status", "unresolved"),
             intent_detected=obs_data.get("intent_detected", ""),
+            intents_detected=obs_data.get("intents_detected", []),
+            intents=obs_data.get("intents", {}),
             hints=obs_data.get("hints", []),
+            # ── Diagnostics ────────────────────────────────────────────────
+            success=obs_data.get("success", False),
+            repetition_count=obs_data.get("repetition_count", 0),
+            stall_count=obs_data.get("stall_count", 0),
+            failure_reason=obs_data.get("failure_reason", ""),
             # ── Reward components ──────────────────────────────────────────
             rule_score=obs_data.get("rule_score", 0.0),
             llm_score=obs_data.get("llm_score", 0.0),
-            stage_reward=obs_data.get("stage_reward", 0.0),
-            final_reward=obs_data.get("final_reward", 0.0),
+            reward_reason=obs_data.get("reward_reason", ""),
             grader_score=obs_data.get("grader_score", 0.0),
             # ── OpenEnv standard ───────────────────────────────────────────
             done=payload.get("done", False),
-            reward=payload.get("reward"),
+            reward=payload.get("reward", 0.0),
             metadata=obs_data.get("metadata", {}),
         )
         return StepResult(
@@ -76,6 +82,10 @@ class CustomerSupportEnv(
             reward=payload.get("reward"),
             done=payload.get("done", False),
         )
+
+    def _parse_reset_result(self, payload: Dict) -> StepResult[CustomerSupportObservation]:
+        """Parse server reset response."""
+        return self._parse_result(payload)
 
     def _parse_state(self, payload: Dict) -> State:
         """Parse server response into State object."""
