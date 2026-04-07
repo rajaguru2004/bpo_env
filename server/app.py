@@ -30,9 +30,19 @@ if root_dir not in sys.path:
 try:
     from models import CustomerSupportAction, CustomerSupportObservation
     from server.bpo_env_environment import CustomerSupportEnvironment
+    from server.graders import (
+        OrderStatusGrader,
+        DamagedProductGrader,
+        EscalationGrader
+    )
 except ImportError:
     from ..models import CustomerSupportAction, CustomerSupportObservation
     from .bpo_env_environment import CustomerSupportEnvironment
+    from .graders import (
+        OrderStatusGrader,
+        DamagedProductGrader,
+        EscalationGrader
+    )
 
 
 app = create_app(
@@ -42,6 +52,57 @@ app = create_app(
     env_name="bpo_env",
     max_concurrent_envs=3,
 )
+
+
+# ---------------------------------------------------------------------------
+# Task Registry & Discovery (for OpenEnv Validator)
+# ---------------------------------------------------------------------------
+
+class OrderStatusEnv(CustomerSupportEnvironment):
+    def reset(self, **kwargs):
+        return super().reset(task_name="order_status", **kwargs)
+
+
+class DamagedProductEnv(CustomerSupportEnvironment):
+    def reset(self, **kwargs):
+        return super().reset(task_name="damaged_product", **kwargs)
+
+
+class EscalationEnv(CustomerSupportEnvironment):
+    def reset(self, **kwargs):
+        return super().reset(task_name="escalation", **kwargs)
+
+
+TASK_REGISTRY = {
+    "order_status": {
+        "env": OrderStatusEnv(),
+        "grader": OrderStatusGrader()
+    },
+    "damaged_product": {
+        "env": DamagedProductEnv(),
+        "grader": DamagedProductGrader()
+    },
+    "escalation": {
+        "env": EscalationEnv(),
+        "grader": EscalationGrader()
+    }
+}
+
+
+def get_tasks():
+    """Discoverable tasks for OpenEnv validator."""
+    return TASK_REGISTRY
+
+
+@app.post("/grade")
+async def grade_trajectory(task_name: str, trajectory: dict):
+    """Explicit grading endpoint for trajectories."""
+    if task_name not in TASK_REGISTRY:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Task {task_name} not found")
+    
+    grader = TASK_REGISTRY[task_name]["grader"]
+    return grader.grade(trajectory)
 
 
 def main():
