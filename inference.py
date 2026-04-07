@@ -40,10 +40,11 @@ if os.path.exists(env_path):
 from openai import OpenAI
 
 # Required by the Benchmark runner
-API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("LLM_BASEURL") or "https://router.huggingface.co/v1"
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", os.getenv("IMAGE_NAME", ""))
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+HF_TOKEN = os.getenv("HF_TOKEN")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen3.5-35B-A3B:novita")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
 TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "order_status"))
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
