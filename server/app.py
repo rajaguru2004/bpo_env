@@ -96,13 +96,46 @@ TASK_REGISTRY = {
 @app.post("/grade")
 async def grade_trajectory(task_name: str, trajectory: Any):
     """Grade a completed trajectory for the given task."""
-    return grade_episode(task_name, trajectory)
+    return {"score": grade_episode(task_name, trajectory)}
 
 
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "online", "environment": "bpo_env"}
+@app.get("/tasks")
+async def list_tasks():
+    """
+    Return all tasks with their grader information.
+    Phase 2 deep validation uses this endpoint to verify that
+    at least 3 tasks have graders attached.
+    """
+    return {
+        "tasks": [
+            {
+                "name": "order_status",
+                "difficulty": "easy",
+                "description": "Customer wants to know the status of their order.",
+                "has_grader": True,
+                "grader": "grade_episode",
+                "grader_module": "tasks",
+            },
+            {
+                "name": "damaged_product",
+                "difficulty": "medium",
+                "description": "Customer received a damaged product and wants a replacement or refund.",
+                "has_grader": True,
+                "grader": "grade_episode",
+                "grader_module": "tasks",
+            },
+            {
+                "name": "escalation",
+                "difficulty": "hard",
+                "description": "Angry customer demanding a full refund and to speak with a manager.",
+                "has_grader": True,
+                "grader": "grade_episode",
+                "grader_module": "tasks",
+            },
+        ],
+        "total": 3,
+        "graded_count": 3,
+    }
 
 
 def main():
