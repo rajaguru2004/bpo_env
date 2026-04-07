@@ -260,3 +260,239 @@ bpo_env/
     ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
     └── Dockerfile         # Container image definition
 ```
+
+
+# 🚀 Multi-Task BPO RL Environment
+
+### 🧠 A Structured Evaluation & Training Platform for Customer Support Agents
+
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![RL Environment](https://img.shields.io/badge/RL-Environment-orange)
+![Status](https://img.shields.io/badge/Status-Stable-success)
+
+---
+
+## 🧠 Overview
+
+This project is a **multi-task reinforcement learning (RL) environment** designed to **simulate and evaluate customer support agent behavior** across real-world scenarios.
+
+Unlike traditional chatbot systems that only generate responses, this environment focuses on:
+
+> 🎯 **Evaluating whether an agent behaves correctly — not just what it says**
+
+---
+
+## 🔥 Key Features
+
+* 🧩 **Multi-Task Support**
+
+  * 📦 Order Status
+  * 📉 Damaged Product Handling
+  * 🚨 Escalation Management
+
+* ⚙️ **State-Based Conversation Engine**
+
+  * Task-specific state machines
+  * Dynamic stage transitions (e.g., inquiry → resolution → closure)
+
+* 🎯 **Three-Layer Evaluation System**
+
+  * **Reward** → Step-by-step behavior quality
+  * **Rule Score** → Progress & intent completion
+  * **Grader Score** → Final task correctness
+
+* 🧠 **Intent-Aware Understanding**
+
+  * Detects:
+
+    * empathy
+    * escalation
+    * refund
+    * replacement
+    * tracking info
+
+* 🚫 **Anti-Cheating Mechanisms**
+
+  * Prevents skipping required steps
+  * Enforces task-specific completion rules
+
+* 🔄 **Recovery Handling**
+
+  * Supports agents that recover after poor initial responses
+
+---
+
+## 🏗️ System Architecture
+
+```
+User Input → Agent Response → Environment Step Engine
+                           ↓
+                  Intent Extraction Layer
+                           ↓
+              State + Stage Transition Logic
+                           ↓
+        Reward + Rule Score + Grader Evaluation
+                           ↓
+                   Structured Feedback Output
+```
+
+---
+
+## 🧪 Supported Scenarios
+
+### 📦 Order Status
+
+* Empathy → Tracking Info → Delivery → Closure
+
+### 📉 Damaged Product
+
+* Apology → Diagnosis → Replacement/Refund → Closure
+
+### 🚨 Escalation
+
+* De-escalation → Manager Escalation → Refund → Closure
+
+---
+
+## ⚙️ How It Works
+
+1. Customer sends a query
+2. Agent generates a response
+3. Environment:
+
+   * Extracts intents
+   * Updates stage
+   * Applies reward logic
+4. Outputs structured evaluation:
+
+   * Reward
+   * Rule Score
+   * Grader Score
+   * Stage
+   * Mood
+
+---
+
+## 📊 Evaluation Metrics
+
+### 🟢 Reward
+
+* Measures **behavior quality at each step**
+* Penalizes:
+
+  * irrelevant responses
+  * repetition
+  * stalling
+* Rewards:
+
+  * correct actions
+  * proper sequencing
+  * recovery
+
+---
+
+### 🔵 Rule Score
+
+* Tracks **progress toward completion**
+* Stage-aware + intent-aware
+
+---
+
+### 🟣 Grader Score
+
+* Final evaluation of:
+
+  * task completion
+  * required intents
+  * proper closure
+
+---
+
+## 🛡️ Robustness Features
+
+* ✔️ Handles incomplete responses
+* ✔️ Penalizes irrelevant behavior
+* ✔️ Detects stalling patterns
+* ✔️ Supports recovery flows
+* ✔️ Prevents reward exploitation
+
+---
+
+## 🚀 Example Flow
+
+```
+Customer: My product arrived damaged.
+
+Agent:
+1. Apologizes → (Reward ↑)
+2. Asks for details → (Stage progression)
+3. Offers replacement → (High reward)
+4. Confirms resolution → (Grader success)
+```
+
+---
+
+## 🧰 Tech Stack
+
+* 🐍 Python
+* ⚡ FastAPI
+* 🧠 OpenEnv (RL Environment Framework)
+* 🔍 Rule-Based Intent Detection
+* 🎯 Reinforcement Learning Style Reward System
+
+---
+
+## 💡 Use Cases
+
+* Training RL-based customer support agents
+* Benchmarking conversational AI systems
+* Simulating real-world BPO workflows
+* Evaluating agent reliability and correctness
+
+---
+
+## ⚡ Future Improvements
+
+* 🔌 LLM-based semantic evaluation layer
+* 📈 Full RL training loop integration
+* 📊 Visualization dashboard
+* 🌍 Expanded scenario coverage
+
+---
+
+## 🎯 Why This Project Matters
+
+Most AI systems focus on:
+
+> ❌ Generating responses
+
+This system focuses on:
+
+> ✅ **Evaluating correct behavior in real-world workflows**
+
+---
+
+## 👥 Team — *Skill Hive*
+
+* 👤 Raja Guru R
+* 👤 Prasanna S
+* 👤 Hariharan P
+
+---
+
+## 🏁 Conclusion
+
+This project demonstrates how to build a:
+
+> 🧠 **Structured, scalable, and intelligent evaluation environment**
+
+for real-world conversational AI systems.
+
+---
+
+## ⭐ Final Thought
+
+> “Most systems generate answers.
+> This system evaluates whether those answers are *correct*.”
+
