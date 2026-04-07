@@ -9,17 +9,20 @@ tasks:
   - name: order_status
     difficulty: easy
     description: Customer wants to know the status of their order.
-    grader: tasks.grade_episode
+    grader: tasks.grade_order_status
+    enabled: true
 
   - name: damaged_product
     difficulty: medium
     description: Customer received a damaged product and wants a replacement or refund.
-    grader: tasks.grade_episode
+    grader: tasks.grade_damaged_product
+    enabled: true
 
   - name: escalation
     difficulty: hard
     description: Angry customer demanding a full refund and to speak with a manager.
-    grader: tasks.grade_episode
+    grader: tasks.grade_escalation
+    enabled: true
 
 entrypoint: server/app.py
 port: 8000

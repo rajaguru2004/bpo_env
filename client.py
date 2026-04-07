@@ -69,7 +69,6 @@ class CustomerSupportEnv(
             failure_reason=obs_data.get("failure_reason", ""),
             # ── Reward components ──────────────────────────────────────────
             rule_score=obs_data.get("rule_score", 0.0),
-            llm_score=obs_data.get("llm_score", 0.0),
             reward_reason=obs_data.get("reward_reason", ""),
             grader_score=obs_data.get("grader_score", 0.0),
             # ── OpenEnv standard ───────────────────────────────────────────

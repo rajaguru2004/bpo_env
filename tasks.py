@@ -177,3 +177,96 @@ def grade_episode(task_name: str, trajectory: Any) -> float:
 
     # Clamp to strict (0.01, 0.99) — validator rejects exactly 0.0 and 1.0
     return max(0.01, min(0.99, total))
+
+
+# ---------------------------------------------------------------------------
+# Per-Task Grader Functions — Phase 2 validator discovers these individually
+# Each function grades a single agent *response* string against optional state.
+# Signature: (response: str, state: dict) -> float in [0.0, 1.0]
+# ---------------------------------------------------------------------------
+
+def grade_order_status(response: str, state: dict = None) -> float:
+    """Grade a single agent response for the order_status task."""
+    if state is None:
+        state = {}
+    text = response.lower()
+    score = 0.2  # base: responded at all
+    if any(w in text for w in ["tracking", "tracking number", "trk", "tracking id"]):
+        score += 0.4
+    if any(w in text for w in ["shipped", "delivered", "in transit", "on its way",
+                                "dispatched", "out for delivery", "processed"]):
+        score += 0.2
+    if any(w in text for w in ["delivery", "expected", "estimated", "arrive", "days",
+                                "april", "march", "may"]):
+        score += 0.2
+    return min(1.0, score)
+
+
+def grade_damaged_product(response: str, state: dict = None) -> float:
+    """Grade a single agent response for the damaged_product task."""
+    if state is None:
+        state = {}
+    text = response.lower()
+    score = 0.2  # base: responded at all
+    if any(w in text for w in ["sorry", "apologize", "apologies", "regret",
+                                "sincerely apologize"]):
+        score += 0.2
+    if any(w in text for w in ["understand", "hear you", "concern", "frustrat",
+                                "inconvenience", "appreciate your patience"]):
+        score += 0.1
+    if any(w in text for w in ["replacement", "replace", "refund", "new unit",
+                                "send a new", "ship a new", "arrange"]):
+        score += 0.3
+    if any(w in text for w in ["days", "hours", "business days", "24", "48",
+                                "3-5", "week", "timeline"]):
+        score += 0.2
+    return min(1.0, score)
+
+
+def grade_escalation(response: str, state: dict = None) -> float:
+    """Grade a single agent response for the escalation task."""
+    if state is None:
+        state = {}
+    text = response.lower()
+    score = 0.2  # base: responded at all
+    if any(w in text for w in ["sorry", "apologize", "sincerely", "apologies",
+                                "deeply sorry"]):
+        score += 0.2
+    if any(w in text for w in ["refund", "full refund", "compensation", "credit",
+                                "resolve", "process your refund"]):
+        score += 0.2
+    if any(w in text for w in ["manager", "supervisor", "escalate", "senior",
+                                "specialist", "team lead", "transfer",
+                                "connect you with"]):
+        score += 0.2
+    if any(w in text for w in ["processed", "within", "days", "hours",
+                                "48", "24", "3-5", "business days"]):
+        score += 0.2
+    return min(1.0, score)
+
+
+# ---------------------------------------------------------------------------
+# TASKS Registry — central map of task name → config + grader
+# The validator uses this to confirm all 3 tasks are enabled and have graders.
+# ---------------------------------------------------------------------------
+
+TASKS: Dict[str, Any] = {
+    "order_status": {
+        "config": TASK_CONFIGS["order_status"],
+        "grader": grade_order_status,
+        "grader_name": "grade_order_status",
+        "enabled": True,
+    },
+    "damaged_product": {
+        "config": TASK_CONFIGS["damaged_product"],
+        "grader": grade_damaged_product,
+        "grader_name": "grade_damaged_product",
+        "enabled": True,
+    },
+    "escalation": {
+        "config": TASK_CONFIGS["escalation"],
+        "grader": grade_escalation,
+        "grader_name": "grade_escalation",
+        "enabled": True,
+    },
+}

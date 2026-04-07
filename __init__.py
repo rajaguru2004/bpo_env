@@ -4,13 +4,20 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Bpo Env Environment."""
+"""BPO Customer Support Resolution Environment."""
 
-from .client import BpoEnv
-from .models import BpoAction, BpoObservation
+# Support both:
+#   - Package import:  import bpo_env          (relative imports work)
+#   - Direct import:   import __init__ as pkg  (absolute imports needed)
+try:
+    from .client import CustomerSupportEnv
+    from .models import CustomerSupportAction, CustomerSupportObservation
+except ImportError:
+    from client import CustomerSupportEnv  # type: ignore[no-redef]
+    from models import CustomerSupportAction, CustomerSupportObservation  # type: ignore[no-redef]
 
 __all__ = [
-    "BpoAction",
-    "BpoObservation",
-    "BpoEnv",
+    "CustomerSupportAction",
+    "CustomerSupportObservation",
+    "CustomerSupportEnv",
 ]
