@@ -199,7 +199,7 @@ def grade_order_status(response: str, state: dict = None) -> float:
     if any(w in text for w in ["delivery", "expected", "estimated", "arrive", "days",
                                 "april", "march", "may"]):
         score += 0.2
-    return min(1.0, score)
+    return max(0.01, min(0.99, score))
 
 
 def grade_damaged_product(response: str, state: dict = None) -> float:
@@ -220,7 +220,7 @@ def grade_damaged_product(response: str, state: dict = None) -> float:
     if any(w in text for w in ["days", "hours", "business days", "24", "48",
                                 "3-5", "week", "timeline"]):
         score += 0.2
-    return min(1.0, score)
+    return max(0.01, min(0.99, score))
 
 
 def grade_escalation(response: str, state: dict = None) -> float:
@@ -242,7 +242,7 @@ def grade_escalation(response: str, state: dict = None) -> float:
     if any(w in text for w in ["processed", "within", "days", "hours",
                                 "48", "24", "3-5", "business days"]):
         score += 0.2
-    return min(1.0, score)
+    return max(0.01, min(0.99, score))
 
 
 # ---------------------------------------------------------------------------

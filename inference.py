@@ -438,7 +438,7 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                     result = env.step(action)
 
                     step_obs = result.observation
-                    reward = result.reward or 0.0
+                    reward = max(0.01, min(0.99, result.reward or 0.01))
                     rule_score = getattr(step_obs, "rule_score", 0.0)
                     done = result.done
                     error = None

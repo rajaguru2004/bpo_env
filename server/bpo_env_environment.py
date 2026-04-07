@@ -1221,7 +1221,7 @@ def _compute_step_reward(
             bonuses_log.append("useful_info:+0.10")
 
         # ── Normalize step_reward ─────────────────────────────────────────
-        step_reward = min(1.0, max(0.0, step_reward))
+        step_reward = max(0.01, min(0.99, step_reward))
 
     else:
         step_reward = tripartite_score
@@ -1670,9 +1670,9 @@ class CustomerSupportEnvironment(Environment):
         # Final step: reward = grader_score (perfect alignment, bounded [0,1])
         # Other steps: reward = max(0.0, step_reward) — small positive signal only
         if is_final_step:
-            reward_out = grader_score
+            reward_out = max(0.01, min(0.99, grader_score))
         else:
-            reward_out = max(0.0, step_reward)
+            reward_out = max(0.01, min(0.99, step_reward))
 
         # ── STEP 2: Accumulate confirmed intents (confidence > 0.6) ───────────
         for intent_name, intent_data in detected_intents.items():

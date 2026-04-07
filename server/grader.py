@@ -170,7 +170,7 @@ def grade_episode(
     #              + quality(0-0.15)  + intent_bonus(0-0.15)  = MAX 1.00
     total = resolution_score + efficiency_score + mood_score + quality_score + intent_bonus
 
-    return min(1.0, max(0.0, total))
+    return max(0.01, min(0.99, total))
 
 
 
