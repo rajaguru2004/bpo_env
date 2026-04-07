@@ -9,15 +9,8 @@ Endpoints:
     - WS /ws: WebSocket endpoint for persistent sessions
 
 Usage:
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+    uvicorn server.app:app --reload --host 0.0.0.0 --port 7860
 """
-
-try:
-    from openenv.core.env_server.http_server import create_app
-except Exception as e:  # pragma: no cover
-    raise ImportError(
-        "openenv is required. Install dependencies with '\n    uv sync\n'"
-    ) from e
 
 import sys
 import os
@@ -26,7 +19,14 @@ from typing import Any
 # Ensure the root directory is in sys.path for absolute imports
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if root_dir not in sys.path:
-    sys.path.append(root_dir)
+    sys.path.insert(0, root_dir)
+
+try:
+    from openenv.core.env_server.http_server import create_app
+except Exception as e:  # pragma: no cover
+    raise ImportError(
+        "openenv is required. Install dependencies with '\n    uv sync\n'"
+    ) from e
 
 try:
     from models import CustomerSupportAction, CustomerSupportObservation
@@ -34,21 +34,19 @@ try:
     from server.graders import (
         OrderStatusGrader,
         DamagedProductGrader,
-        EscalationGrader
+        EscalationGrader,
     )
-    from tasks import TASK_CONFIGS, grade_episode
 except ImportError:
     from ..models import CustomerSupportAction, CustomerSupportObservation
     from .bpo_env_environment import CustomerSupportEnvironment
     from .graders import (
         OrderStatusGrader,
         DamagedProductGrader,
-        EscalationGrader
+        EscalationGrader,
     )
-    import sys
-    import os
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from tasks import TASK_CONFIGS, grade_episode
+
+# Import grader from the root-level tasks module (self-contained, no circular deps)
+from tasks import grade_episode
 
 
 app = create_app(
@@ -61,7 +59,7 @@ app = create_app(
 
 
 # ---------------------------------------------------------------------------
-# Task Registry & Discovery (for OpenEnv Validator)
+# Task Registry & Discovery
 # ---------------------------------------------------------------------------
 
 class OrderStatusEnv(CustomerSupportEnvironment):
@@ -81,29 +79,30 @@ class EscalationEnv(CustomerSupportEnvironment):
 
 TASK_REGISTRY = {
     "order_status": {
-        "env": OrderStatusEnv(),
-        "grader": OrderStatusGrader()
+        "env_class": OrderStatusEnv,
+        "grader": OrderStatusGrader(),
     },
     "damaged_product": {
-        "env": DamagedProductEnv(),
-        "grader": DamagedProductGrader()
+        "env_class": DamagedProductEnv,
+        "grader": DamagedProductGrader(),
     },
     "escalation": {
-        "env": EscalationEnv(),
-        "grader": EscalationGrader()
-    }
+        "env_class": EscalationEnv,
+        "grader": EscalationGrader(),
+    },
 }
-
-
-def get_tasks():
-    """Discoverable tasks for OpenEnv validator."""
-    return TASK_REGISTRY
 
 
 @app.post("/grade")
 async def grade_trajectory(task_name: str, trajectory: Any):
-    """Explicit grading endpoint for trajectories."""
+    """Grade a completed trajectory for the given task."""
     return grade_episode(task_name, trajectory)
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "online", "environment": "bpo_env"}
 
 
 def main():

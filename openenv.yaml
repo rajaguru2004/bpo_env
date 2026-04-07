@@ -1,22 +1,22 @@
-spec_version: 1
 name: bpo_env
-type: space
-runtime: fastapi
-app: server.app:app
-port: 8000
+version: 1.0.0
+description: >
+  BPO Customer Support Resolution Environment.
+  An RL environment where an AI agent acts as a customer support executive,
+  handling real-world customer service scenarios across three difficulty levels.
 
 tasks:
   - name: order_status
     difficulty: easy
-    max_steps: 5
     description: Customer wants to know the status of their order.
 
   - name: damaged_product
     difficulty: medium
-    max_steps: 8
     description: Customer received a damaged product and wants a replacement or refund.
 
   - name: escalation
     difficulty: hard
-    max_steps: 12
     description: Angry customer demanding a full refund and to speak with a manager.
+
+entrypoint: server/app.py
+port: 8000
