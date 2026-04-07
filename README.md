@@ -99,27 +99,32 @@ cp .env.copy .env
 
 ---
 
-### Step 1 — Activate Virtual Environment
+### Step 1 — Set Up & Activate Virtual Environment
 
-Before running any Python commands, activate the virtual environment:
-
-```bash
-# Create the virtual environment (only needed once)
-python3 -m venv venv
-
-# Activate it (run this every time you start a new terminal session)
-source venv/bin/activate
-```
-
-After activation, your terminal prompt will show `(venv)` at the start.
-
-**Install dependencies** (only needed once after creating the venv):
+This project uses [`uv`](https://github.com/astral-sh/uv) for fast dependency management.
 
 ```bash
-pip install -r requirements.txt
-# or if using pyproject.toml
-pip install -e .
+# Install uv (only needed once)
+pip install uv
+
+# Create the virtual environment and install all dependencies
+uv sync
+
+# Activate the virtual environment
+
+# Linux / macOS
+source .venv/bin/activate
+
+# Windows (Command Prompt)
+.venv\Scripts\activate.bat
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
 ```
+
+After activation, your terminal prompt will show `(openenv-bpo-env)` at the start, confirming the environment is active.
+
+> 💡 Run `uv sync` only once (or whenever dependencies change). Run the activate command every time you open a new terminal.
 
 ---
 

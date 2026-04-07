@@ -1,31 +1,30 @@
 {
   "meta": {
-    "task_name": "escalation"
+    "task_name": "order_status"
   },
   "results": [
     {
-      "name": "happy_path_refund",
-      "task_name": "escalation",
+      "name": "happy_path",
+      "task_name": "order_status",
       "steps": [
         {
           "step": 1,
-          "action": "I sincerely apologize for the poor experience. I completely understand your frustration and I take full responsibility for this.",
+          "action": "I'm sorry for the delay. Let me check your order status for you.",
           "reward": 0.6,
           "done": false,
-          "conversation_stage": "de_escalation",
-          "customer_mood": "neutral",
-          "reward_reason": "Correct and complete response.",
-          "rule_score": 1.0,
+          "conversation_stage": "inquiry",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: tracking number.",
+          "rule_score": 0.8,
           "grader_score": 0.0,
           "repetition_count": 0,
           "stall_count": 0,
           "intents_detected": [
             "apology",
-            "de_escalation",
             "greeting"
           ],
           "intents": {
-            "empathy": true,
+            "empathy": false,
             "apology": true,
             "tracking_info": false,
             "delivery_info": false,
@@ -42,27 +41,27 @@
         },
         {
           "step": 2,
-          "action": "I will escalate this immediately to my supervisor to oversee the resolution personally.",
+          "action": "Your order #12345 has been shipped. The tracking number is TRK987654321 and it is currently in transit.",
           "reward": 0.6,
           "done": false,
           "conversation_stage": "resolution",
           "customer_mood": "satisfied",
-          "reward_reason": "Missing: refund, days.",
-          "rule_score": 0.36000000000000004,
+          "reward_reason": "Missing: expected delivery.",
+          "rule_score": 0.8,
           "grader_score": 0.0,
           "repetition_count": 0,
           "stall_count": 0,
           "intents_detected": [
-            "resolution_offer"
+            "information_provide"
           ],
           "intents": {
             "empathy": false,
             "apology": false,
-            "tracking_info": false,
+            "tracking_info": true,
             "delivery_info": false,
             "refund": false,
             "replacement": false,
-            "escalation": true,
+            "escalation": false,
             "closure": false,
             "information_request": false,
             "off_topic": false
@@ -73,28 +72,29 @@
         },
         {
           "step": 3,
-          "action": "We will process a full refund to your account within 48 hours as a gesture of goodwill.",
-          "reward": 0.8703124999999999,
+          "action": "Your order is expected to be delivered by April 3rd. Your reference number is REF-101. Is there anything else I can help you with?",
+          "reward": 0.86,
           "done": true,
           "conversation_stage": "closure",
           "customer_mood": "satisfied",
           "reward_reason": "Resolved with closure",
           "rule_score": 1.0,
-          "grader_score": 0.8703124999999999,
+          "grader_score": 0.86,
           "repetition_count": 0,
           "stall_count": 0,
           "intents_detected": [
-            "resolution_offer"
+            "information_provide",
+            "confirmation"
           ],
           "intents": {
             "empathy": false,
             "apology": false,
             "tracking_info": false,
-            "delivery_info": false,
-            "refund": true,
+            "delivery_info": true,
+            "refund": false,
             "replacement": false,
             "escalation": false,
-            "closure": false,
+            "closure": true,
             "information_request": false,
             "off_topic": false
           },
@@ -105,37 +105,80 @@
       ],
       "total_steps": 3,
       "final_done": true,
-      "final_reward": 0.8703124999999999,
-      "final_grader_score": 0.8703124999999999,
+      "final_reward": 0.86,
+      "final_grader_score": 0.86,
       "final_stage": "closure",
       "final_mood": "satisfied",
       "is_resolved": true
     },
     {
-      "name": "missing_manager_mention",
-      "task_name": "escalation",
+      "name": "incomplete_response",
+      "task_name": "order_status",
       "steps": [
         {
           "step": 1,
-          "action": "I am so sorry. I understand.",
-          "reward": 0.35000000000000003,
+          "action": "I'm sorry for the wait. Your order is on its way.",
+          "reward": 0.5400000000000001,
           "done": false,
-          "conversation_stage": "de_escalation",
-          "customer_mood": "neutral",
+          "conversation_stage": "inquiry",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: tracking number. Provided status info without providing a tracking number.",
+          "rule_score": 0.6400000000000001,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 1,
+      "final_done": false,
+      "final_reward": 0.5400000000000001,
+      "final_grader_score": 0.0,
+      "final_stage": "inquiry",
+      "final_mood": "satisfied",
+      "is_resolved": false
+    },
+    {
+      "name": "repetition",
+      "task_name": "order_status",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Your order #12345 is shipped. Tracking is TRK987654321.",
+          "reward": 0.595,
+          "done": false,
+          "conversation_stage": "inquiry",
+          "customer_mood": "satisfied",
           "reward_reason": "Response is too brief or vague.",
           "rule_score": 0.36,
           "grader_score": 0.0,
           "repetition_count": 0,
           "stall_count": 0,
           "intents_detected": [
-            "apology",
-            "de_escalation",
-            "greeting"
+            "information_provide"
           ],
           "intents": {
-            "empathy": true,
-            "apology": true,
-            "tracking_info": false,
+            "empathy": false,
+            "apology": false,
+            "tracking_info": true,
             "delivery_info": false,
             "refund": false,
             "replacement": false,
@@ -150,25 +193,25 @@
         },
         {
           "step": 2,
-          "action": "I will process your refund right now.",
-          "reward": 0.6,
+          "action": "Your order #12345 is shipped. Tracking is TRK987654321.",
+          "reward": 0.2,
           "done": false,
-          "conversation_stage": "resolution",
+          "conversation_stage": "inquiry",
           "customer_mood": "satisfied",
-          "reward_reason": "Response is too brief or vague. Missing: days.",
-          "rule_score": 0.36,
+          "reward_reason": "Repetitive response.",
+          "rule_score": 0.1,
           "grader_score": 0.0,
-          "repetition_count": 0,
-          "stall_count": 0,
+          "repetition_count": 1,
+          "stall_count": 1,
           "intents_detected": [
-            "resolution_offer"
+            "information_provide"
           ],
           "intents": {
             "empathy": false,
             "apology": false,
-            "tracking_info": false,
+            "tracking_info": true,
             "delivery_info": false,
-            "refund": true,
+            "refund": false,
             "replacement": false,
             "escalation": false,
             "closure": false,
@@ -177,24 +220,24 @@
           },
           "is_resolved": false,
           "success": false,
-          "failure_reason": ""
+          "failure_reason": "Repetitive content detected"
         }
       ],
       "total_steps": 2,
       "final_done": false,
-      "final_reward": 0.6,
+      "final_reward": 0.2,
       "final_grader_score": 0.0,
-      "final_stage": "resolution",
+      "final_stage": "inquiry",
       "final_mood": "satisfied",
       "is_resolved": false
     },
     {
       "name": "irrelevant_response",
-      "task_name": "escalation",
+      "task_name": "order_status",
       "steps": [
         {
           "step": 1,
-          "action": "Please visit our website for more info about your escalation request.",
+          "action": "Please visit our website for more info regarding your order status.",
           "reward": 0.0,
           "done": false,
           "conversation_stage": "start",
@@ -234,20 +277,20 @@
     },
     {
       "name": "stalling_agent",
-      "task_name": "escalation",
+      "task_name": "order_status",
       "steps": [
         {
           "step": 1,
           "action": "Could you please confirm your name?",
-          "reward": 0.1,
+          "reward": 0.25,
           "done": false,
-          "conversation_stage": "start",
-          "customer_mood": "angry",
-          "reward_reason": "Response doesn't match expected intent for this stage. Response is too brief or vague.",
-          "rule_score": 0.36,
+          "conversation_stage": "inquiry",
+          "customer_mood": "satisfied",
+          "reward_reason": "Response is too brief or vague. Missing: tracking number, order status.",
+          "rule_score": 0.24000000000000002,
           "grader_score": 0.0,
           "repetition_count": 0,
-          "stall_count": 1,
+          "stall_count": 0,
           "intents_detected": [
             "information_request"
           ],
@@ -272,13 +315,13 @@
           "action": "Could you also confirm your zip code?",
           "reward": 0.1,
           "done": false,
-          "conversation_stage": "start",
-          "customer_mood": "angry",
-          "reward_reason": "Response doesn't match expected intent for this stage. Response is too brief or vague.",
-          "rule_score": 0.36,
+          "conversation_stage": "inquiry",
+          "customer_mood": "satisfied",
+          "reward_reason": "Response is too brief or vague. Missing: tracking number, order status.",
+          "rule_score": 0.24000000000000002,
           "grader_score": 0.0,
           "repetition_count": 0,
-          "stall_count": 2,
+          "stall_count": 1,
           "intents_detected": [
             "information_request"
           ],
@@ -303,13 +346,13 @@
           "action": "What was the city on the shipping address?",
           "reward": 0.1,
           "done": false,
-          "conversation_stage": "start",
-          "customer_mood": "angry",
-          "reward_reason": "Response is off-topic. Response is too brief or vague.",
-          "rule_score": 0.32,
+          "conversation_stage": "inquiry",
+          "customer_mood": "neutral",
+          "reward_reason": "Response is off-topic. Response is too brief or vague. Missing: tracking number, order status.",
+          "rule_score": 0.2,
           "grader_score": 0.0,
           "repetition_count": 0,
-          "stall_count": 3,
+          "stall_count": 2,
           "intents_detected": [
             "off_topic"
           ],
@@ -334,8 +377,8 @@
       "final_done": false,
       "final_reward": 0.1,
       "final_grader_score": 0.0,
-      "final_stage": "start",
-      "final_mood": "angry",
+      "final_stage": "inquiry",
+      "final_mood": "neutral",
       "is_resolved": false
     }
   ]
