@@ -133,7 +133,7 @@ def log_end(
     else:
         # OUTPUT MANDATORY FIELDS ONLY TO STDOUT (Benchmark Mode)
         print(
-            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+            f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
             flush=True,
         )
         # EXTRA SUMMARY INFO TO STDERR
