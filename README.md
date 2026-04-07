@@ -293,6 +293,8 @@ python3 run_scenarios.py --url https://rajaguru2004-bpo-env.hf.space --task orde
 
 ## 🏗️ System Architecture
 
+![System Architecture](archi_final.png)
+
 ```
 User Input → Agent Response → Environment Step Engine
                            ↓
