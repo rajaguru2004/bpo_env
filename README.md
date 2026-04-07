@@ -11,257 +11,6 @@ tags:
   - openenv
 ---
 
-openenv build
-docker run -p 8000:8000 bpo_env_env:latest
-APP_ENV=test python inference.py
-
---task {order_status,damaged_product,escalation}
-python3 run_scenarios.py --url http://localhost:8000 --task order_status
-
-# Bpo Env Environment
-
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
-
-## Quick Start
-
-The simplest way to use the Bpo Env environment is through the `BpoEnv` class:
-
-```python
-from bpo_env import BpoAction, BpoEnv
-
-try:
-    # Create environment from Docker image
-    bpo_envenv = BpoEnv.from_docker_image("bpo_env-env:latest")
-
-    # Reset
-    result = bpo_envenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = bpo_envenv.step(BpoAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    bpo_envenv.close()
-```
-
-That's it! The `BpoEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
-
-## Building the Docker Image
-
-Before using the environment, you need to build the Docker image:
-
-```bash
-# From project root
-docker build -t bpo_env-env:latest -f server/Dockerfile .
-```
-
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**BpoAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**BpoObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Bpo Env environment server running, you can connect directly:
-
-```python
-from bpo_env import BpoEnv
-
-# Connect to existing server
-bpo_envenv = BpoEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = bpo_envenv.reset()
-result = bpo_envenv.step(BpoAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `bpo_envenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from bpo_env import BpoAction, BpoEnv
-
-# Connect with context manager (auto-connects and closes)
-with BpoEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(BpoAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    BpoEnvironment,  # Pass class, not instance
-    BpoAction,
-    BpoObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from bpo_env import BpoAction, BpoEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with BpoEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(BpoAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/bpo_env_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
-bpo_env/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # BpoEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── bpo_env_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
-```
-
-
 # 🚀 Multi-Task BPO RL Environment
 
 ### 🧠 A Structured Evaluation & Training Platform for Customer Support Agents
@@ -270,6 +19,7 @@ bpo_env/
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
 ![RL Environment](https://img.shields.io/badge/RL-Environment-orange)
 ![Status](https://img.shields.io/badge/Status-Stable-success)
+[![HuggingFace Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-yellow)](https://huggingface.co/spaces/rajaguru2004/bpo_env)
 
 ---
 
@@ -283,42 +33,255 @@ Unlike traditional chatbot systems that only generate responses, this environmen
 
 ---
 
+## 📋 Table of Contents
+
+- [🛠️ Setup Guide (Local)](#️-setup-guide-local)
+  - [Step 0 — Configure your .env](#step-0--configure-your-env)
+  - [Step 1 — Activate Virtual Environment](#step-1--activate-virtual-environment)
+  - [Step 2 — Build the Docker Image](#step-2--build-the-docker-image)
+  - [Step 3 — Run the Server](#step-3--run-the-server)
+  - [Step 4 — Test with LLM Agent](#step-4--test-with-llm-agent-inferncepy)
+  - [Step 5 — Run in Test Loop Mode](#step-5--run-in-test-loop-mode)
+  - [Step 6 — Run Predefined Scenarios](#step-6--run-predefined-scenario-suite)
+- [🌐 Deployed Environment (HuggingFace)](#-deployed-environment-huggingface)
+- [🔥 Key Features](#-key-features)
+- [🏗️ System Architecture](#️-system-architecture)
+- [🧪 Supported Scenarios](#-supported-scenarios)
+- [📊 Evaluation Metrics](#-evaluation-metrics)
+- [🧰 Tech Stack](#-tech-stack)
+- [👥 Team](#-team--skill-hive)
+
+---
+
+## 🛠️ Setup Guide (Local)
+
+Follow these steps **in order** to get the environment running on your machine.
+
+---
+
+### Step 0 — Configure your `.env`
+
+A template file `.env.copy` is provided in the project root. Before anything else, fill in your credentials and rename it to `.env`.
+
+**1. Open `.env.copy` and fill in your values:**
+
+```env
+OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+
+LLM_BASEURL="https://router.huggingface.co/v1"
+MODEL_NAME="Qwen/Qwen3.5-35B-A3B:novita"
+
+HF_TOKEN="<YOUR_HUGGINGFACE_TOKEN>"
+SERVER_URL="http://localhost:8000"
+MY_ENV_V4_TASK=order_status
+APP_ENV=prod
+LOCAL_IMAGE_NAME="openenv-bpo:latest"
+```
+
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | Your OpenAI (or OpenRouter-compatible) API key |
+| `LLM_BASEURL` | Base URL for the LLM provider (HuggingFace router by default) |
+| `MODEL_NAME` | Model to use as the LLM agent |
+| `HF_TOKEN` | Your HuggingFace access token |
+| `SERVER_URL` | URL where the BPO server will be running |
+| `MY_ENV_V4_TASK` | Task for the agent: `order_status`, `damaged_product`, or `escalation` |
+| `APP_ENV` | Set to `prod` for single run, `test` for automated loop |
+| `LOCAL_IMAGE_NAME` | Docker image name (do not change) |
+
+**2. Rename the file:**
+
+```bash
+cp .env.copy .env
+```
+
+> ⚠️ **Important:** Never commit the `.env` file to version control. It contains secret credentials.
+
+---
+
+### Step 1 — Activate Virtual Environment
+
+Before running any Python commands, activate the virtual environment:
+
+```bash
+# Create the virtual environment (only needed once)
+python3 -m venv venv
+
+# Activate it (run this every time you start a new terminal session)
+source venv/bin/activate
+```
+
+After activation, your terminal prompt will show `(venv)` at the start.
+
+**Install dependencies** (only needed once after creating the venv):
+
+```bash
+pip install -r requirements.txt
+# or if using pyproject.toml
+pip install -e .
+```
+
+---
+
+### Step 2 — Build the Docker Image
+
+Use the `openenv` CLI to build the Docker image for the BPO environment:
+
+```bash
+openenv build
+```
+
+This will produce a Docker image named:
+
+```
+openenv-bpo:latest
+```
+
+> 💡 Make sure Docker is running before executing this command. You can verify with `docker info`.
+
+---
+
+### Step 3 — Run the Server
+
+Start the BPO environment server using Docker:
+
+```bash
+docker run -p 8000:8000 openenv-bpo:latest
+```
+
+The server will be **up and running at `http://localhost:8000`**.
+
+You can verify it's running by opening:
+- **Web Interface:** [http://localhost:8000/web](http://localhost:8000/web)
+- **API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Health Check:** [http://localhost:8000/health](http://localhost:8000/health)
+
+> ✅ Keep this terminal open. The server must be running for all subsequent steps.
+
+---
+
+### Step 4 — Test with LLM Agent (`inference.py`)
+
+The `inference.py` script runs a live LLM as the agent against the environment.
+
+**Set the task you want to evaluate** by updating `MY_ENV_V4_TASK` in your `.env` file (or export it inline):
+
+```bash
+# Option A — Set inline before running
+MY_ENV_V4_TASK=order_status python inference.py
+
+# Option B — Export and run
+export MY_ENV_V4_TASK=damaged_product
+python inference.py
+
+# Option C — Edit .env directly and run
+python inference.py
+```
+
+**Available task values:**
+
+| Task | Description |
+|---|---|
+| `order_status` | Agent helps customer track their order |
+| `damaged_product` | Agent handles a damaged product complaint |
+| `escalation` | Agent de-escalates an angry customer and escalates to a manager |
+
+---
+
+### Step 5 — Run in Test Loop Mode
+
+To run a **series of automated tests in a loop** (without a live LLM), set `APP_ENV=test`:
+
+```bash
+APP_ENV=test python inference.py
+```
+
+This will cycle through multiple test conversations automatically and print structured evaluation results for each.
+
+---
+
+### Step 6 — Run Predefined Scenario Suite
+
+For comprehensive benchmarking with **predefined scripted test cases**, use `run_scenarios.py`:
+
+```bash
+python3 run_scenarios.py --url http://localhost:8000 --task order_status
+```
+
+**Switch tasks using the `--task` flag:**
+
+```bash
+# Order Status scenarios
+python3 run_scenarios.py --url http://localhost:8000 --task order_status
+
+# Damaged Product scenarios
+python3 run_scenarios.py --url http://localhost:8000 --task damaged_product
+
+# Escalation scenarios
+python3 run_scenarios.py --url http://localhost:8000 --task escalation
+```
+
+**Full usage:**
+
+```
+usage: run_scenarios.py [-h] [--url URL] [--task {order_status,damaged_product,escalation}] [--output OUTPUT]
+
+options:
+  --url     URL of the running BPO server (default: http://localhost:8000)
+  --task    Task type to evaluate (choices: order_status, damaged_product, escalation)
+  --output  Path to save JSON results (default: scenario_results.json)
+```
+
+Results are printed as a **structured performance table** and also saved to `scenario_results.json`.
+
+---
+
+## 🌐 Deployed Environment (HuggingFace)
+
+The BPO environment is **already deployed** and available publicly on HuggingFace Spaces:
+
+🔗 **[https://huggingface.co/spaces/rajaguru2004/bpo_env](https://huggingface.co/spaces/rajaguru2004/bpo_env)**
+
+From the **web interface** you can:
+
+| Feature | Description |
+|---|---|
+| **Step** | Send a response as the agent and receive an evaluation |
+| **Reset** | Reset the environment to start a new episode |
+| **Get State** | View the current conversation state, stage, and mood |
+
+> 💡 To run `inference.py` or `run_scenarios.py` against the deployed environment, simply replace `http://localhost:8000` with the HuggingFace Space URL.
+
+```bash
+python3 run_scenarios.py --url https://rajaguru2004-bpo-env.hf.space --task order_status
+```
+
+---
+
 ## 🔥 Key Features
 
 * 🧩 **Multi-Task Support**
-
   * 📦 Order Status
   * 📉 Damaged Product Handling
   * 🚨 Escalation Management
 
 * ⚙️ **State-Based Conversation Engine**
-
   * Task-specific state machines
   * Dynamic stage transitions (e.g., inquiry → resolution → closure)
 
 * 🎯 **Three-Layer Evaluation System**
-
   * **Reward** → Step-by-step behavior quality
   * **Rule Score** → Progress & intent completion
   * **Grader Score** → Final task correctness
 
 * 🧠 **Intent-Aware Understanding**
-
-  * Detects:
-
-    * empathy
-    * escalation
-    * refund
-    * replacement
-    * tracking info
+  * Detects: `empathy`, `escalation`, `refund`, `replacement`, `tracking info`
 
 * 🚫 **Anti-Cheating Mechanisms**
-
   * Prevents skipping required steps
   * Enforces task-specific completion rules
 
 * 🔄 **Recovery Handling**
-
   * Supports agents that recover after poor initial responses
 
 ---
@@ -342,15 +305,12 @@ User Input → Agent Response → Environment Step Engine
 ## 🧪 Supported Scenarios
 
 ### 📦 Order Status
-
-* Empathy → Tracking Info → Delivery → Closure
+* Empathy → Tracking Info → Delivery Date → Closure
 
 ### 📉 Damaged Product
-
 * Apology → Diagnosis → Replacement/Refund → Closure
 
 ### 🚨 Escalation
-
 * De-escalation → Manager Escalation → Refund → Closure
 
 ---
@@ -360,12 +320,10 @@ User Input → Agent Response → Environment Step Engine
 1. Customer sends a query
 2. Agent generates a response
 3. Environment:
-
    * Extracts intents
    * Updates stage
    * Applies reward logic
 4. Outputs structured evaluation:
-
    * Reward
    * Rule Score
    * Grader Score
@@ -379,22 +337,14 @@ User Input → Agent Response → Environment Step Engine
 ### 🟢 Reward
 
 * Measures **behavior quality at each step**
-* Penalizes:
-
-  * irrelevant responses
-  * repetition
-  * stalling
-* Rewards:
-
-  * correct actions
-  * proper sequencing
-  * recovery
+* Penalizes: irrelevant responses, repetition, stalling
+* Rewards: correct actions, proper sequencing, recovery
 
 ---
 
 ### 🔵 Rule Score
 
-* Tracks **progress toward completion**
+* Tracks **progress toward task completion**
 * Stage-aware + intent-aware
 
 ---
@@ -402,9 +352,8 @@ User Input → Agent Response → Environment Step Engine
 ### 🟣 Grader Score
 
 * Final evaluation of:
-
   * task completion
-  * required intents
+  * required intents detected
   * proper closure
 
 ---
@@ -435,8 +384,9 @@ Agent:
 
 ## 🧰 Tech Stack
 
-* 🐍 Python
+* 🐍 Python 3.10+
 * ⚡ FastAPI
+* 🐳 Docker
 * 🧠 OpenEnv (RL Environment Framework)
 * 🔍 Rule-Based Intent Detection
 * 🎯 Reinforcement Learning Style Reward System
@@ -493,6 +443,5 @@ for real-world conversational AI systems.
 
 ## ⭐ Final Thought
 
-> “Most systems generate answers.
-> This system evaluates whether those answers are *correct*.”
-
+> "Most systems generate answers.
+> This system evaluates whether those answers are *correct*."
