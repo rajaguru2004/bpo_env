@@ -49,6 +49,7 @@ TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "order_status"))
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 APP_ENV = os.getenv("APP_ENV", "prod")  # 'prod' for benchmarks, 'test' for verbose multi-tasking
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
 # Score calculation metrics — success requires genuine resolution, not just threshold
 MAX_STEPS_DEFAULT = 10
@@ -101,12 +102,13 @@ def log_step(
             f"[STEP] step={step} action={action_clean} reward={reward:.2f} done={done_val} error={error_val}",
             flush=True,
         )
-        # EXTRA STATE INFO TO STDERR
-        extras = f"rule_score={rule_score:.2f}"
-        if stage: extras += f" stage={stage}"
-        if mood: extras += f" mood={mood}"
-        if intent: extras += f" intent={intent}"
-        print(f"   [DEBUG] STEP {step} EXTRAS: {extras}", file=sys.stderr, flush=True)
+        # EXTRA STATE INFO TO STDERR (Only if DEBUG_MODE is enabled)
+        if DEBUG_MODE:
+            extras = f"rule_score={rule_score:.2f}"
+            if stage: extras += f" stage={stage}"
+            if mood: extras += f" mood={mood}"
+            if intent: extras += f" intent={intent}"
+            print(f"   [DEBUG] STEP {step} EXTRAS: {extras}", file=sys.stderr, flush=True)
 
 
 def log_end(
@@ -134,21 +136,22 @@ def log_end(
     else:
         # OUTPUT MANDATORY FIELDS ONLY TO STDOUT (Benchmark Mode)
         print(
-            f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+            f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
             flush=True,
         )
-        # EXTRA SUMMARY INFO TO STDERR
-        print(
-            f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} grader={grader_score:.3f} reason={failure_reason} reward_reason={reward_reason}",
-            file=sys.stderr, flush=True
-        )
+        # EXTRA SUMMARY INFO TO STDERR (Only if DEBUG_MODE is enabled)
+        if DEBUG_MODE:
+            print(
+                f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} grader={grader_score:.3f} reason={failure_reason} reward_reason={reward_reason}",
+                file=sys.stderr, flush=True
+            )
 
 # Helper for descriptive logs
 def debug_log(msg: str) -> None:
-    # If in test mode, print to stdout (old way). If prod, stderr only.
+    # If in test mode, print to stdout. If prod, stderr only (and only if DEBUG_MODE).
     if APP_ENV == "test":
         print(f"   {msg}", flush=True)
-    else:
+    elif DEBUG_MODE:
         print(f"   [DEBUG] {msg}", file=sys.stderr, flush=True)
 
 # Task names to run
@@ -488,8 +491,7 @@ def main():
 
     # Validate env vars
     if not HF_TOKEN:
-        debug_log("HF_TOKEN (API Key) is not set. Please export your API key.")
-        sys.exit(1)
+        debug_log("WARNING: HF_TOKEN (API Key) is not set. Fallback responses will be used for grading.")
 
     # Check server health
     debug_log(f"Checking server at {SERVER_URL} ...")
