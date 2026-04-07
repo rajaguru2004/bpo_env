@@ -6,23 +6,63 @@ description: >
   handling real-world customer service scenarios across three difficulty levels.
 
 tasks:
-  - name: order_status
+  - id: order_status
+    name: order_status
     difficulty: easy
+    max_steps: 10
     description: Customer wants to know the status of their order.
-    grader: tasks.grade_order_status
     enabled: true
+    grader:
+      type: llm
+      prompt_template: >
+        You are evaluating a customer support agent's response to a customer asking about their order status.
+        Score the response from 0.0 to 1.0 based on these criteria:
+        - Did the agent acknowledge the customer's inquiry? (0.2 points)
+        - Did the agent provide or reference a tracking number? (0.4 points)
+        - Did the agent mention the shipment or delivery status? (0.2 points)
+        - Did the agent provide an estimated delivery date or timeline? (0.2 points)
+        Agent response: {response}
+        Return only a single float between 0.0 and 1.0.
 
-  - name: damaged_product
+  - id: damaged_product
+    name: damaged_product
     difficulty: medium
+    max_steps: 15
     description: Customer received a damaged product and wants a replacement or refund.
-    grader: tasks.grade_damaged_product
     enabled: true
+    grader:
+      type: llm
+      prompt_template: >
+        You are evaluating a customer support agent's response to a customer who received a damaged product
+        and is requesting a replacement or refund.
+        Score the response from 0.0 to 1.0 based on these criteria:
+        - Did the agent apologize or show empathy for the damaged item? (0.2 points)
+        - Did the agent acknowledge the customer's frustration and inconvenience? (0.1 points)
+        - Did the agent offer a replacement or refund resolution? (0.3 points)
+        - Did the agent provide a clear timeline for when the issue will be resolved? (0.2 points)
+        - Was the overall tone professional and helpful? (0.2 points)
+        Agent response: {response}
+        Return only a single float between 0.0 and 1.0.
 
-  - name: escalation
+  - id: escalation
+    name: escalation
     difficulty: hard
+    max_steps: 20
     description: Angry customer demanding a full refund and to speak with a manager.
-    grader: tasks.grade_escalation
     enabled: true
+    grader:
+      type: llm
+      prompt_template: >
+        You are evaluating a customer support agent's response to a highly escalated situation where
+        an angry customer is demanding a full refund and to speak with a manager.
+        Score the response from 0.0 to 1.0 based on these criteria:
+        - Did the agent sincerely apologize and de-escalate the customer's anger? (0.2 points)
+        - Did the agent acknowledge the refund request and commit to processing it? (0.2 points)
+        - Did the agent offer or arrange escalation to a manager or senior specialist? (0.2 points)
+        - Did the agent provide a clear timeline for refund processing? (0.2 points)
+        - Did the agent maintain professionalism throughout despite the hostility? (0.2 points)
+        Agent response: {response}
+        Return only a single float between 0.0 and 1.0.
 
 entrypoint: server/app.py
 port: 8000
