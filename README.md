@@ -210,20 +210,20 @@ This will cycle through multiple test conversations automatically and print stru
 For comprehensive benchmarking with **predefined scripted test cases**, use `run_scenarios.py`:
 
 ```bash
-python3 run_scenarios.py --url http://localhost:8000 --task order_status
+python run_scenarios.py --url http://localhost:8000 --task order_status
 ```
 
 **Switch tasks using the `--task` flag:**
 
 ```bash
 # Order Status scenarios
-python3 run_scenarios.py --url http://localhost:8000 --task order_status
+python run_scenarios.py --url http://localhost:8000 --task order_status
 
 # Damaged Product scenarios
-python3 run_scenarios.py --url http://localhost:8000 --task damaged_product
+python run_scenarios.py --url http://localhost:8000 --task damaged_product
 
 # Escalation scenarios
-python3 run_scenarios.py --url http://localhost:8000 --task escalation
+python run_scenarios.py --url http://localhost:8000 --task escalation
 ```
 
 **Full usage:**

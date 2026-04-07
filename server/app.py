@@ -21,6 +21,7 @@ except Exception as e:  # pragma: no cover
 
 import sys
 import os
+from typing import Any
 
 # Ensure the root directory is in sys.path for absolute imports
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -35,6 +36,7 @@ try:
         DamagedProductGrader,
         EscalationGrader
     )
+    from tasks import TASK_CONFIGS, grade_episode
 except ImportError:
     from ..models import CustomerSupportAction, CustomerSupportObservation
     from .bpo_env_environment import CustomerSupportEnvironment
@@ -43,6 +45,10 @@ except ImportError:
         DamagedProductGrader,
         EscalationGrader
     )
+    import sys
+    import os
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from tasks import TASK_CONFIGS, grade_episode
 
 
 app = create_app(
@@ -95,14 +101,9 @@ def get_tasks():
 
 
 @app.post("/grade")
-async def grade_trajectory(task_name: str, trajectory: dict):
+async def grade_trajectory(task_name: str, trajectory: Any):
     """Explicit grading endpoint for trajectories."""
-    if task_name not in TASK_REGISTRY:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"Task {task_name} not found")
-    
-    grader = TASK_REGISTRY[task_name]["grader"]
-    return grader.grade(trajectory)
+    return grade_episode(task_name, trajectory)
 
 
 def main():
