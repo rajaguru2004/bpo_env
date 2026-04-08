@@ -44,10 +44,9 @@ Unlike traditional chatbot systems that only generate responses, this environmen
   - [Step 1 — Activate Virtual Environment](#step-1--activate-virtual-environment)
   - [Step 2 — Build the Docker Image](#step-2--build-the-docker-image)
   - [Step 3 — Run the Server](#step-3--run-the-server)
-  - [Step 4 — Test with LLM Agent](#step-4--test-with-llm-agent-inferncepy)
-  - [Step 5 — Run in Test Loop Mode](#step-5--run-in-test-loop-mode)
-  - [Step 6 — Run Predefined Scenarios](#step-6--run-predefined-scenario-suite)
-  - [Step 7 — Stress Testing & Robustness](#step-7--stress-testing--robustness)
+  - [Step 4 — Run LLM Agent Inference](#step-4--run-llm-agent-inference-inferencepy)
+  - [Step 5 — Run Predefined Scenarios](#step-5--run-predefined-scenario-suite)
+  - [Step 6 — Stress Testing & Robustness](#step-6--stress-testing--robustness)
 
 - [🌐 Deployed Environment (HuggingFace)](#-deployed-environment-huggingface)
 - [🔥 Key Features](#-key-features)
@@ -79,28 +78,25 @@ A template file `.env.copy` is provided in the project root. Before anything els
 **1. Open `.env.copy` and fill in your values:**
 
 ```env
-OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
-
-LLM_BASEURL="https://router.huggingface.co/v1"
-MODEL_NAME="Qwen/Qwen3.5-35B-A3B:novita"
-
+API_KEY="<YOUR_API_KEY>"
 HF_TOKEN="<YOUR_HUGGINGFACE_TOKEN>"
+
+API_BASE_URL="https://router.huggingface.co/v1"
+MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
+
 SERVER_URL="http://localhost:8000"
-MY_ENV_V4_TASK=order_status
-APP_ENV=prod
 LOCAL_IMAGE_NAME="openenv-bpo:latest"
 ```
 
 | Variable | Description |
 |---|---|
-| `OPENAI_API_KEY` | Your OpenAI (or OpenRouter-compatible) API key |
-| `LLM_BASEURL` | Base URL for the LLM provider (HuggingFace router by default) |
+| `API_KEY` | Primary API key for the LLM provider (e.g., OpenRouter or HF) |
+| `HF_TOKEN` | Your HuggingFace access token (used as fallback for `API_KEY`) |
+| `API_BASE_URL` | Base URL for the LLM provider (default: HuggingFace router) |
 | `MODEL_NAME` | Model to use as the LLM agent |
-| `HF_TOKEN` | Your HuggingFace access token |
 | `SERVER_URL` | URL where the BPO server will be running |
-| `MY_ENV_V4_TASK` | Task for the agent: `order_status`, `damaged_product`, or `escalation` |
-| `APP_ENV` | Set to `prod` for single run, `test` for automated loop |
-| `LOCAL_IMAGE_NAME` | Docker image name (do not change) |
+| `LOCAL_IMAGE_NAME` | Docker image name used for local dev |
+
 
 **2. Rename the file:**
 
@@ -178,47 +174,22 @@ You can verify it's running by opening:
 
 ---
 
-### Step 4 — Test with LLM Agent (`inference.py`)
+### Step 4 — Run LLM Agent Inference (`inference.py`)
 
-The `inference.py` script runs a live LLM as the agent against the environment.
-
-**Set the task you want to evaluate** by updating `MY_ENV_V4_TASK` in your `.env` file (or export it inline):
+The `inference.py` script runs the live LLM agent against the entire set of conversation tasks.
 
 ```bash
-# Option A — Set inline before running
-MY_ENV_V4_TASK=order_status python inference.py
-
-# Option B — Export and run
-export MY_ENV_V4_TASK=damaged_product
-python inference.py
-
-# Option C — Edit .env directly and run
 python inference.py
 ```
 
-**Available task values:**
-
-| Task | Description |
-|---|---|
-| `order_status` | Agent helps customer track their order |
-| `damaged_product` | Agent handles a damaged product complaint |
-| `escalation` | Agent de-escalates an angry customer and escalates to a manager |
+By default, this will sequentially execute the full production evaluation for all 3 tasks:
+1. **Easy** (`order_status`)
+2. **Medium** (`damaged_product`)
+3. **Hard** (`escalation`)
 
 ---
 
-### Step 5 — Run in Test Loop Mode
-
-To run a **series of automated tests in a loop** (without a live LLM), set `APP_ENV=test`:
-
-```bash
-APP_ENV=test python inference.py
-```
-
-This will cycle through multiple test conversations automatically and print structured evaluation results for each.
-
----
-
-### Step 6 — Run Predefined Scenario Suite
+### Step 5 — Run Predefined Scenario Suite
 
 For comprehensive benchmarking with **predefined scripted test cases**, use `run_scenarios.py`:
 
@@ -241,7 +212,7 @@ python run_scenarios.py --all-tasks
 
 ---
 
-### Step 7 — Stress Testing & Robustness
+### Step 6 — Stress Testing & Robustness
 
 To verify that the environment and agent can handle noisy, incomplete, or repetitive inputs without collapsing, use the **Stress Test Mode**:
 

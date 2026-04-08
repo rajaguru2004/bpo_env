@@ -86,12 +86,6 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 # Benchmark identifier (matches openenv.yaml name)
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
 
-# Task selection:
-# - Hackathon evaluator injects MY_ENV_V4_TASK as a REAL process env var → run that one task
-# - Not set → run all 3 tasks (local verification mode)
-# NOTE: We explicitly ignore .env for task selection to prevent accidental overrides.
-_TASK_FROM_EVALUATOR = os.environ.get("MY_ENV_V4_TASK") or os.environ.get("TASK_NAME")
-
 # Success threshold for score-based resolution
 SUCCESS_SCORE_THRESHOLD = 0.5
 
@@ -811,13 +805,9 @@ def main():
     # Resolve where the environment server is / start it
     server_url = _resolve_server_url()
 
-    if _TASK_FROM_EVALUATOR:
-        # Hackathon evaluator injected a specific task — run only that one
-        run_task(_TASK_FROM_EVALUATOR, server_url)
-    else:
-        # No task specified — run all 3 tasks (local verification)
-        for task_id in TASKS_TO_RUN:
-            run_task(task_id, server_url)
+    # Sequential Production Verification: Run all 3 tasks once
+    for task_id in TASKS_TO_RUN:
+        run_task(task_id, server_url)
 
 
 if __name__ == "__main__":
