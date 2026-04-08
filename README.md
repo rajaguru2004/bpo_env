@@ -48,6 +48,7 @@ Unlike traditional chatbot systems that only generate responses, this environmen
 - [🏗️ System Architecture](#️-system-architecture)
 - [🧪 Supported Scenarios](#-supported-scenarios)
 - [📊 Evaluation Metrics](#-evaluation-metrics)
+- [⚖️ Note on Evaluation Approach](#️-note-on-evaluation-approach)
 - [🧰 Tech Stack](#-tech-stack)
 - [👥 Team](#-team--skill-hive)
 
@@ -378,10 +379,28 @@ User Input → Agent Response → Environment Step Engine
 
 ---
 
+---
+
 ### 🟠 Stage-Aware Hints
 
 * **Real-time Guidance**: Provides dynamic hints to the agent based on the current state and stage.
 * **Instruction Following**: Measures the agent's ability to follow SOP-specific guidance provided by the environment.
+
+---
+
+## ⚖️ Note on Evaluation Approach
+
+This environment utilizes a **deterministic, rule-based, and intent-driven evaluation architecture** instead of relying on stochastic LLM-based grading. This engineering choice is fundamental to the project's goal of Providing a high-fidelity benchtop for RL agents.
+
+### 🛡️ Core Advantages:
+
+* **Pure Reproducibility**: Scoring is 100% consistent across identical trajectories, eliminating the "LLM-grader variance" common in many evaluation frameworks.
+* **Granular Behavioral Control**: Evaluation is hard-coded to task-specific SOPs, ensuring agents are rewarded for following exact business logic (e.g., *empathy → tracking → date*).
+* **High-Precision Signals**: By breaking rewards into Intent, Completeness, and Sequence, the system provides clear and interpretable training signals for reinforcement learning.
+* **Zero-Dependency Integrity**: The core evaluation logic remains fully deterministic and functional without external API calls, maintaining platform compatibility and performance.
+
+> [!NOTE]
+> While the system supports LLM-based "judging" for higher-level semantic nuances where required for platform compatibility, the **primary success metrics** are driven by this rigorous, rule-based engine.
 
 ---
 
