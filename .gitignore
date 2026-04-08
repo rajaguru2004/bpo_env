@@ -1,9 +1,12 @@
 /.venv
 .env
 /reasoning_gym_env
-__pycache__/*
+__pycache__/
+*.pyc
+scenario_results.json
 *.log
 .agents/*
 .codex/*
 test_api_v2.py
 test_api.py
+meta-hackthon/
