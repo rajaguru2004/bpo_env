@@ -6,63 +6,26 @@ description: >
   handling real-world customer service scenarios across three difficulty levels.
 
 tasks:
-  - id: order_status
-    name: order_status
+  - id: task_easy
     difficulty: easy
     max_steps: 10
-    description: Customer wants to know the status of their order.
-    enabled: true
     grader:
       type: llm
-      prompt_template: >
-        You are evaluating a customer support agent's response to a customer asking about their order status.
-        Score the response from 0.0 to 1.0 based on these criteria:
-        - Did the agent acknowledge the customer's inquiry? (0.2 points)
-        - Did the agent provide or reference a tracking number? (0.4 points)
-        - Did the agent mention the shipment or delivery status? (0.2 points)
-        - Did the agent provide an estimated delivery date or timeline? (0.2 points)
-        Agent response: {response}
-        Return only a single float between 0.0 and 1.0.
+      prompt_template: "Score this 0.0 to 1.0: Did the agent provide the order tracking number, shipment status, and estimated delivery date in a professional and helpful manner? Response: {response}"
 
-  - id: damaged_product
-    name: damaged_product
+  - id: task_medium
     difficulty: medium
     max_steps: 15
-    description: Customer received a damaged product and wants a replacement or refund.
-    enabled: true
     grader:
       type: llm
-      prompt_template: >
-        You are evaluating a customer support agent's response to a customer who received a damaged product
-        and is requesting a replacement or refund.
-        Score the response from 0.0 to 1.0 based on these criteria:
-        - Did the agent apologize or show empathy for the damaged item? (0.2 points)
-        - Did the agent acknowledge the customer's frustration and inconvenience? (0.1 points)
-        - Did the agent offer a replacement or refund resolution? (0.3 points)
-        - Did the agent provide a clear timeline for when the issue will be resolved? (0.2 points)
-        - Was the overall tone professional and helpful? (0.2 points)
-        Agent response: {response}
-        Return only a single float between 0.0 and 1.0.
+      prompt_template: "Score this 0.0 to 1.0: Did the agent apologize, show empathy, and offer a clear replacement or refund resolution with a timeline for a damaged product complaint? Response: {response}"
 
-  - id: escalation
-    name: escalation
+  - id: task_hard
     difficulty: hard
     max_steps: 20
-    description: Angry customer demanding a full refund and to speak with a manager.
-    enabled: true
     grader:
       type: llm
-      prompt_template: >
-        You are evaluating a customer support agent's response to a highly escalated situation where
-        an angry customer is demanding a full refund and to speak with a manager.
-        Score the response from 0.0 to 1.0 based on these criteria:
-        - Did the agent sincerely apologize and de-escalate the customer's anger? (0.2 points)
-        - Did the agent acknowledge the refund request and commit to processing it? (0.2 points)
-        - Did the agent offer or arrange escalation to a manager or senior specialist? (0.2 points)
-        - Did the agent provide a clear timeline for refund processing? (0.2 points)
-        - Did the agent maintain professionalism throughout despite the hostility? (0.2 points)
-        Agent response: {response}
-        Return only a single float between 0.0 and 1.0.
+      prompt_template: "Score this 0.0 to 1.0: Did the agent de-escalate an angry customer, process their refund request, offer escalation to a manager, and maintain professionalism throughout? Response: {response}"
 
 entrypoint: server/app.py
 port: 8000
