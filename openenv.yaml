@@ -1,3 +1,5 @@
+spec_version: 1
+
 name: bpo_env
 version: 1.0.0
 description: >
@@ -6,26 +8,34 @@ description: >
   handling real-world customer service scenarios across three difficulty levels.
 
 tasks:
-  - id: task_easy
+  - id: order_status
+    name: order_status
     difficulty: easy
     max_steps: 10
+    description: Customer wants to know the status of their order.
     grader:
       type: llm
       prompt_template: "Score this 0.0 to 1.0: Did the agent provide the order tracking number, shipment status, and estimated delivery date in a professional and helpful manner? Response: {response}"
 
-  - id: task_medium
+  - id: damaged_product
+    name: damaged_product
     difficulty: medium
     max_steps: 15
+    description: Customer received a damaged product and wants a replacement or refund.
     grader:
       type: llm
       prompt_template: "Score this 0.0 to 1.0: Did the agent apologize, show empathy, and offer a clear replacement or refund resolution with a timeline for a damaged product complaint? Response: {response}"
 
-  - id: task_hard
+  - id: escalation
+    name: escalation
     difficulty: hard
     max_steps: 20
+    description: Angry customer demanding a full refund and to speak with a manager.
     grader:
       type: llm
       prompt_template: "Score this 0.0 to 1.0: Did the agent de-escalate an angry customer, process their refund request, offer escalation to a manager, and maintain professionalism throughout? Response: {response}"
-
+runtime: fastapi
+app: server.app:app
+type: space
 entrypoint: server/app.py
 port: 8000
