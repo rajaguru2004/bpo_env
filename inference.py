@@ -69,11 +69,14 @@ IMAGE_NAME = (
 # Fallback local server URL (used when IMAGE_NAME is also absent)
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
-# Task to run in single-task benchmark mode
-TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "task_easy"))
-
 # Benchmark identifier (matches openenv.yaml name)
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
+
+# Task selection:
+# - Hackathon evaluator injects MY_ENV_V4_TASK as a REAL process env var → run that one task
+# - Not set → run all 3 tasks (local verification mode)
+# NOTE: We explicitly ignore .env for task selection to prevent accidental overrides.
+_TASK_FROM_EVALUATOR = os.environ.get("MY_ENV_V4_TASK") or os.environ.get("TASK_NAME")
 
 # Success threshold for score-based resolution
 SUCCESS_SCORE_THRESHOLD = 0.5
@@ -243,36 +246,41 @@ def _resolve_server_url() -> str:
     Determine the environment server URL to use.
 
     Priority:
-      1. IMAGE_NAME is an http(s):// URL → use it directly
-      2. IMAGE_NAME is a Docker image tag  → start container via from_docker_image()
-         (async call); return the URL it starts on.
-      3. No IMAGE_NAME → check SERVER_URL (local dev / fallback)
-      4. Final fallback: start uvicorn locally.
+      1. IMAGE_NAME is an http(s):// URL → use it directly (HF Space or remote server)
+      2. IMAGE_NAME is a Docker image tag  → start container via `docker run`
+      3. No IMAGE_NAME → check SERVER_URL (already running local server)
+      4. Final fallback: start uvicorn locally from source.
     """
     if IMAGE_NAME:
         if IMAGE_NAME.startswith(("http://", "https://")):
+            # Remote server / HF Space URL — use directly
             return IMAGE_NAME
         else:
-            # Docker image — try to use openenv's built-in Docker helper
-            try:
-                import asyncio
-                from client import CustomerSupportEnv
+            # Docker image tag — start container directly via docker run
+            port = SERVER_URL.split(":")[-1].rstrip("/") if ":" in SERVER_URL else "8000"
+            print(f"[INFO] Starting Docker container: {IMAGE_NAME} on port {port}", file=sys.stderr, flush=True)
+            subprocess.Popen(
+                [
+                    "docker", "run", "--rm", "-d",
+                    "-p", f"{port}:{port}",
+                    "--name", "openenv-bpo-inference",
+                    IMAGE_NAME,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if not wait_for_server(SERVER_URL, timeout=30):
+                print("[ERROR] Docker container failed to start within 30s.", file=sys.stderr, flush=True)
+                sys.exit(1)
+            print(f"[INFO] Docker server ready at {SERVER_URL}", file=sys.stderr, flush=True)
+            return SERVER_URL
 
-                async def _start_docker():
-                    env_client = await CustomerSupportEnv.from_docker_image(IMAGE_NAME)
-                    return env_client.base_url
-
-                url = asyncio.run(_start_docker())
-                return url
-            except Exception as exc:
-                print(f"[WARN] Docker start via from_docker_image failed: {exc}", file=sys.stderr, flush=True)
-                print("[WARN] Falling back to local server startup …", file=sys.stderr, flush=True)
-
-    # Try the configured SERVER_URL first
+    # Try the configured SERVER_URL first (already running server)
     if wait_for_server(SERVER_URL, timeout=5):
         return SERVER_URL
 
-    # Last resort: spawn uvicorn locally
+    # Last resort: spawn uvicorn locally from source
+    print("[INFO] Starting local uvicorn server …", file=sys.stderr, flush=True)
     subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
@@ -286,6 +294,7 @@ def _resolve_server_url() -> str:
         print("[ERROR] Could not start server. Ensure uvicorn is installed.", file=sys.stderr, flush=True)
         sys.exit(1)
     return SERVER_URL
+
 
 # ---------------------------------------------------------------------------
 # Task runner
@@ -439,8 +448,13 @@ def main():
     # Resolve where the environment server is / start it
     server_url = _resolve_server_url()
 
-    # Single-task mode — benchmark runner calls once per task
-    run_task(TASK_NAME, server_url)
+    if _TASK_FROM_EVALUATOR:
+        # Hackathon evaluator injected a specific task — run only that one
+        run_task(_TASK_FROM_EVALUATOR, server_url)
+    else:
+        # No task specified — run all 3 tasks (local verification)
+        for task_id in TASKS_TO_RUN:
+            run_task(task_id, server_url)
 
 
 if __name__ == "__main__":

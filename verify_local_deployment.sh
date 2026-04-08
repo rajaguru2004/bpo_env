@@ -50,11 +50,11 @@ if [ $READY -eq 0 ]; then
     exit 1
 fi
 
-echo "[4/5] Test: Running inference.py in 'test' mode..."
-# Ensure local dependencies are used
+echo "[4/5] Test: Running inference.py against all 3 tasks..."
+# Force inference.py to skip Docker entirely and use the running server directly
 export IMAGE_NAME=""
+export LOCAL_IMAGE_NAME=""
 export SERVER_URL="http://localhost:$PORT"
-export APP_ENV="test"
 
 # Run the inference script
 python inference.py

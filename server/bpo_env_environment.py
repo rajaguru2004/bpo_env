@@ -1396,8 +1396,18 @@ class CustomerSupportEnvironment(Environment):
                        Defaults to 'order_status'.
             episode_id: Optional episode ID override.
         """
+        # Resolve platform-required IDs to internal task names
+        TASK_ALIASES = {
+            "task_easy":   "order_status",
+            "task_medium": "damaged_product",
+            "task_hard":   "escalation",
+        }
+        if task_name in TASK_ALIASES:
+            task_name = TASK_ALIASES[task_name]
+
         if task_name is None or task_name not in TASKS:
             task_name = "order_status"
+
 
         self._task_name = task_name
         self._task = TASKS[task_name]
