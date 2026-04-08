@@ -49,6 +49,7 @@ Unlike traditional chatbot systems that only generate responses, this environmen
 - [🧪 Supported Scenarios](#-supported-scenarios)
 - [📊 Evaluation Metrics](#-evaluation-metrics)
 - [⚖️ Note on Evaluation Approach](#️-note-on-evaluation-approach)
+- [⚡ Future Roadmap](#-future-roadmap)
 - [🧰 Tech Stack](#-tech-stack)
 - [👥 Team](#-team--skill-hive)
 
@@ -448,12 +449,13 @@ Agent:
 
 ---
 
-## ⚡ Future Improvements
+## ⚡ Future Roadmap
 
-* 🔌 LLM-based semantic evaluation layer
-* 📈 Full RL training loop integration
-* 📊 Visualization dashboard
-* 🌍 Expanded scenario coverage
+* 🧠 **Hybrid Semantic Evaluation**: Integrating a consensus-based LLM layer to evaluate high-level semantic nuances, such as empathy depth and conversation sentiment, to complement the deterministic core.
+* 🎭 **Procedural Scenario Generation**: Leveraging generative AI to create dynamic customer personas and edge-case scenarios on-the-fly, testing agent generalization across diverse human behaviors.
+* 🔄 **Integrated RL Training Pipeline**: Built-in support for PPO/DQN training loops to enable end-to-end agent optimization directly within the BPO environment.
+* 📊 **Real-time Analytics Dashboard**: A comprehensive visualization layer for monitoring episode trajectories, reward convergence, and intent-coverage heatmaps.
+* 🌎 **Multilingual Support**: Extending the rule-based intent engine to support global customer service operations across multiple languages and cultural contexts.
 
 ---
 
