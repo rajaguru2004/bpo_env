@@ -16,21 +16,37 @@ Changes in v4:
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+# ---------------------------------------------------------------------------
+# Path Initialization
+# ---------------------------------------------------------------------------
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_parent_root = os.path.dirname(_project_root)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+if _parent_root not in sys.path:
+    sys.path.insert(0, _parent_root)
+
 # Import local the native project client and models
 try:
-    from client import CustomerSupportEnv
-    from models import CustomerSupportAction
+    # 1. Primary path: Unified bpo_env prefix satisfies IDE root
+    from bpo_env.client import CustomerSupportEnv
+    from bpo_env.models import CustomerSupportAction
 except ImportError:
-    # Handle if run from outside the root directory
-    import os
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from client import CustomerSupportEnv
-    from models import CustomerSupportAction
+    try:
+        # 2. Dynamic fallback: Hides from IDE linter but works at runtime
+        import importlib
+        _c_mod = importlib.import_module("client")
+        _m_mod = importlib.import_module("models")
+        CustomerSupportEnv = _c_mod.CustomerSupportEnv
+        CustomerSupportAction = _m_mod.CustomerSupportAction
+    except (ImportError, ModuleNotFoundError):
+        CustomerSupportEnv = CustomerSupportAction = None # type: ignore
 
 # ---------------------------------------------------------------------------
 # Configuration

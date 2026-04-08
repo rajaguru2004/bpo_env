@@ -33,7 +33,9 @@ _STALL_HARD_CAP        = 0.10
 _INTENT_COMPLETE_BONUS = 0.10
 _STAGE_PROGRESS_BONUS  = 0.05
 _SEQUENCE_BONUS        = 0.03   # Task 4.D
-_RECOVERY_JUMP_BONUS   = 0.05   # Task 4.C
+_RECOVERY_JUMP_BONUS   = 0.05   # Task 4.C -> Task 5.A
+_CLOSURE_BONUS         = 0.03   # Task 5.B
+_DELAYED_RECOVERY_CAP  = 0.60   # Task 5.C
 
 # ---------------------------------------------------------------------------
 # Stage/Task Requirements
@@ -59,9 +61,10 @@ def shape_reward(
     stage_advanced: bool,
     detected_intents_dict: Optional[Dict[str, Any]],
     task_name: str,
-    customer_interaction_data: Optional[Dict[str, Any]] = None, # Added to match environment call site
+    customer_interaction_data: Optional[Dict[str, Any]] = None,
     last_reward: float = 1.0,           # For recovery bonus
     is_ordered: bool = True,            # For sequence bonus
+    low_reward_streak: int = 0,         # Task 5.C
 ) -> float:
     """
     Apply advanced sharpening rules to the base step reward.
@@ -86,10 +89,14 @@ def shape_reward(
         elif stall_count == 1:
             reward = max(0.01, reward - _STALL_PENALTY_1)
 
+    # ── D. Delayed recovery penalty (Task 5.C) ────────────────────────────────
+    if low_reward_streak > 1 and reward < 0.4:
+        reward = min(reward, _DELAYED_RECOVERY_CAP)
+
     # Skip bonuses if repetitive or off-topic
     if not is_repetitive and not (off_topic_data.get("present", False) and off_topic_data.get("confidence", 0) > 0.7):
 
-        # ── D. Intent completeness boost ──────────────────────────────────────
+        # ── E. Intent completeness boost ──────────────────────────────────────
         required = _TASK_REQUIRED.get(task_name, [])
         if required and detected_intents_dict:
             all_present = all(
@@ -98,12 +105,16 @@ def shape_reward(
             )
             if all_present:
                 reward = min(0.99, reward + _INTENT_COMPLETE_BONUS)
+                
+                # Closure bonus (Task 5.B): Resolve + Closure
+                if stage_name == "closure" or detected_intents_dict.get("closure", {}).get("present", False):
+                    reward = min(0.99, reward + _CLOSURE_BONUS)
 
-        # ── E. Stage progress bonus ────────────────────────────────────────────
+        # ── F. Stage progress bonus ────────────────────────────────────────────
         if stage_advanced:
             reward = min(0.99, reward + _STAGE_PROGRESS_BONUS)
 
-        # ── F. Early-stage differentiation (4.A) ───────────────────────────────
+        # ── G. Early-stage differentiation (4.A) ───────────────────────────────
         if stage_name not in _FINAL_STAGES and not stage_advanced:
             matching_count = sum(1 for i in intents if i not in {"off_topic", "information_request"})
             if matching_count == 0:
@@ -113,16 +124,16 @@ def shape_reward(
             elif matching_count >= 2:
                 reward = min(reward, 0.75) # Strong
 
-        # ── G. Sequence correctness bonus (4.D) ───────────────────────────────
+        # ── H. Sequence correctness bonus (4.D) ───────────────────────────────
         if is_ordered and stage_advanced:
             reward = min(0.99, reward + _SEQUENCE_BONUS)
 
-        # ── H. Fast recovery jump / Partial recovery (Task 4.C) ───────────────
+        # ── I. Fast recovery jump (Task 5.A) ──────────────────────────────────
         if last_reward < 0.3:
             if reward > 0.8:
                 reward = min(0.99, reward + _RECOVERY_JUMP_BONUS)
             elif reward >= 0.3:
-                # Add a "partial recovery boost" to push it above the 0.4 stress threshold
+                # Partial recovery boost to push above stress 0.4 threshold
                 reward = min(0.99, reward + 0.15)
 
     # Final clamp

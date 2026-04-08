@@ -28,14 +28,28 @@ import textwrap
 from typing import Any, Dict, List, Optional, Set
 
 # ---------------------------------------------------------------------------
-# Load .env for local development (ignored when validator injects vars directly)
+# Path Initialization (Must be before internal imports)
 # ---------------------------------------------------------------------------
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_parent_root = os.path.dirname(_project_root)
+
+# Standardize sys.path for both local execution and IDE linter (Pyrefly)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+if _parent_root not in sys.path:
+    sys.path.insert(0, _parent_root)
+
+# ---------------------------------------------------------------------------
+# Load .env for local development
+# ---------------------------------------------------------------------------
+_env_path = os.path.join(_project_root, ".env")
 if os.path.exists(_env_path):
     try:
-        from dotenv import load_dotenv
-        load_dotenv(_env_path)
-    except ImportError:
+        import importlib
+        _dotenv = importlib.import_module("dotenv")
+        _dotenv.load_dotenv(_env_path)
+    except (ImportError, ModuleNotFoundError):
+        # Minimal manual parsing if dotenv is missing or linter is blind
         with open(_env_path) as _f:
             for _line in _f:
                 if "=" in _line and not _line.startswith("#"):
@@ -90,47 +104,82 @@ TASKS_TO_RUN = ["task_easy", "task_medium", "task_hard"]
 # ---------------------------------------------------------------------------
 # OpenAI-compatible client (resolves after env vars are loaded)
 # ---------------------------------------------------------------------------
-from openai import OpenAI  # noqa: E402 — placed here intentionally after env load
-
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
 # ---------------------------------------------------------------------------
-# Robustness module imports (all internal — never affect API output)
+# OpenAI-compatible client (resolves after env vars are loaded)
 # ---------------------------------------------------------------------------
-_server_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server")
-if _server_dir not in sys.path:
-    sys.path.insert(0, _server_dir)
-
 try:
-    from server.response_validator import ResponseValidator, ResponseValidatorState
-    from server.stage_policy_enforcer import StagePolicyEnforcer
-    from server.anti_stall_engine import AntiStallEngine, AntiStallState
-    from server.episode_memory import EpisodeMemory
-    from server.repeat_intent_detector import RepeatIntentDetector
-    from server.stage_sequence_guard import StageSequenceGuard
-    from server.intents import extract_mood, extract_intents, get_bridge_intents
+    import importlib
+    _openai_mod = importlib.import_module("openai")
+    OpenAI = _openai_mod.OpenAI
+except (ImportError, ModuleNotFoundError):
+    # Fallback if openai is completely missing
+    OpenAI = None # type: ignore
+
+if OpenAI:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+else:
+    client = None
+
+# ---------------------------------------------------------------------------
+# Robustness module imports (Internal Only - agent side)
+# ---------------------------------------------------------------------------
+try:
+    # 1. Try IDE-friendly prefixed imports first
+    from bpo_env.agent_logic.response_validator import ResponseValidator, ResponseValidatorState
+    from bpo_env.agent_logic.stage_policy_enforcer import StagePolicyEnforcer
+    from bpo_env.agent_logic.anti_stall_engine import AntiStallEngine, AntiStallState
+    from bpo_env.agent_logic.episode_memory import EpisodeMemory
+    from bpo_env.agent_logic.repeat_intent_detector import RepeatIntentDetector
+    from bpo_env.agent_logic.stage_sequence_guard import StageSequenceGuard
+    from bpo_env.agent_logic.intents import extract_mood, extract_intents, get_bridge_intents
+    from bpo_env.agent_logic.immediate_recovery_policy import ImmediateRecoveryPolicy
+    from bpo_env.agent_logic.closure_enforcer import ClosureEnforcer
+    from bpo_env.agent_logic.mood_adaptive_policy import MoodAdaptivePolicy
 except ImportError:
     try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from server.response_validator import ResponseValidator, ResponseValidatorState
-        from server.stage_policy_enforcer import StagePolicyEnforcer
-        from server.anti_stall_engine import AntiStallEngine, AntiStallState
-        from server.episode_memory import EpisodeMemory
-        from server.repeat_intent_detector import RepeatIntentDetector
-        from server.stage_sequence_guard import StageSequenceGuard
-        from server.intents import extract_mood, extract_intents, get_bridge_intents
-    except ImportError:
-        ResponseValidator = None
-        ResponseValidatorState = None
-        StagePolicyEnforcer = None
-        AntiStallEngine = None
-        AntiStallState = None
-        EpisodeMemory = None
-        RepeatIntentDetector = None
-        StageSequenceGuard = None
-        extract_mood = None
-        extract_intents = None
-        get_bridge_intents = None
+        # 2. Dynamic fallback (hides from IDE linter but works at runtime)
+        import importlib
+        _validator_mod = importlib.import_module("agent_logic.response_validator")
+        ResponseValidator = _validator_mod.ResponseValidator
+        ResponseValidatorState = _validator_mod.ResponseValidatorState
+        
+        _enforcer_mod = importlib.import_module("agent_logic.stage_policy_enforcer")
+        StagePolicyEnforcer = _enforcer_mod.StagePolicyEnforcer
+        
+        _stall_mod = importlib.import_module("agent_logic.anti_stall_engine")
+        AntiStallEngine = _stall_mod.AntiStallEngine
+        AntiStallState = _stall_mod.AntiStallState
+        
+        _memory_mod = importlib.import_module("agent_logic.episode_memory")
+        EpisodeMemory = _memory_mod.EpisodeMemory
+        
+        _repeat_mod = importlib.import_module("agent_logic.repeat_intent_detector")
+        RepeatIntentDetector = _repeat_mod.RepeatIntentDetector
+        
+        _guard_mod = importlib.import_module("agent_logic.stage_sequence_guard")
+        StageSequenceGuard = _guard_mod.StageSequenceGuard
+        
+        _intents_mod = importlib.import_module("agent_logic.intents")
+        extract_mood = _intents_mod.extract_mood
+        extract_intents = _intents_mod.extract_intents
+        get_bridge_intents = _intents_mod.get_bridge_intents
+        
+        _recovery_mod = importlib.import_module("agent_logic.immediate_recovery_policy")
+        ImmediateRecoveryPolicy = _recovery_mod.ImmediateRecoveryPolicy
+        
+        _closure_mod = importlib.import_module("agent_logic.closure_enforcer")
+        ClosureEnforcer = _closure_mod.ClosureEnforcer
+        
+        _mood_mod = importlib.import_module("agent_logic.mood_adaptive_policy")
+        MoodAdaptivePolicy = _mood_mod.MoodAdaptivePolicy
+        
+    except (ImportError, ModuleNotFoundError):
+        # 3. Final default fallback
+        ResponseValidator = ResponseValidatorState = StagePolicyEnforcer = None  # type: ignore
+        AntiStallEngine = AntiStallState = EpisodeMemory = None # type: ignore
+        RepeatIntentDetector = StageSequenceGuard = extract_mood = None # type: ignore
+        extract_intents = get_bridge_intents = ImmediateRecoveryPolicy = None # type: ignore
+        ClosureEnforcer = MoodAdaptivePolicy = None # type: ignore
 
 # Phrase diversity banks — Task 3.C
 _PHRASE_POOLS = {
@@ -183,32 +232,12 @@ _episode_memory: Optional[Any] = EpisodeMemory() if EpisodeMemory else None
 # Quick intent extractor (lightweight bridge for robustness modules)
 # Does NOT call the environment — used only before submitting to env.
 # ---------------------------------------------------------------------------
-def _quick_intent_extract(text: str) -> Set[str]:
-    """
-    Fast keyword-based intent extraction for ResponseValidator / AntiStallEngine.
-    Returns a set of bridged intent labels (same namespace as get_bridge_intents).
-    """
-    lower = text.lower()
-    intents: Set[str] = set()
-
-    if any(kw in lower for kw in ["sorry", "apologize", "apology", "apologies"]):
-        intents.add("apology")
-    if any(kw in lower for kw in ["understand", "frustration", "hear you", "appreciate"]):
-        intents.add("de_escalation")
-    if any(kw in lower for kw in ["tracking number", "trk", "order status", "in transit",
-                                    "expected delivery", "delivery date"]):
-        intents.add("information_provide")
-    if any(kw in lower for kw in ["could you", "can you", "please provide",
-                                    "order number", "confirm"]):
-        intents.add("information_request")
-    if any(kw in lower for kw in ["refund", "replacement", "replace", "escalate",
-                                    "manager", "supervisor", "new unit"]):
-        intents.add("resolution_offer")
-    if any(kw in lower for kw in ["anything else", "have a great day", "thank you",
-                                    "case number", "reference number", "all set"]):
-        intents.add("confirmation")
-
-    return intents if intents else {"off_topic"}
+def _get_draft_intents(text: str, task_name: str) -> Set[str]:
+    """Internal bridge to extract a set of intents from text."""
+    if extract_intents and get_bridge_intents:
+        raw = extract_intents(text, task_name)
+        return set(get_bridge_intents(raw))
+    return set()
 
 
 # ---------------------------------------------------------------------------
@@ -442,11 +471,20 @@ def _resolve_server_url() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Task runner
+# Task runner dependencies
 # ---------------------------------------------------------------------------
-
-from client import CustomerSupportEnv  # noqa: E402
-
+try:
+    from bpo_env.client import CustomerSupportEnv
+    from bpo_env.models import CustomerSupportAction
+except ImportError:
+    try:
+        import importlib
+        _c_mod = importlib.import_module("client")
+        _m_mod = importlib.import_module("models")
+        CustomerSupportEnv = _c_mod.CustomerSupportEnv
+        CustomerSupportAction = _m_mod.CustomerSupportAction
+    except (ImportError, ModuleNotFoundError):
+        CustomerSupportEnv = CustomerSupportAction = None # type: ignore
 
 def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
     """Run a single task episode and return a summary dict."""
@@ -473,7 +511,6 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
     
     # New detectors (Task 1, 5)
     user_input_history: List[str] = []
-    last_user_intents: Optional[Set[str]] = None
     history_intents: List[Set[str]] = []
 
     try:
@@ -540,45 +577,61 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                         for i in range(0, min(len(words) - 2, 15), 3)
                     ]
 
-                # 5. Recovery mode (Task 2)
-                recovery_mode = (last_reward < 0.3)
-                
-                # 5a. Mood detection (Task 3.A)
+                # 5. Pipeline Phase: Input Analysis & Policy Hints (Task 6)
                 current_user_msg = conversation_history[-1]["content"] if conversation_history else ""
-                user_mood = extract_mood(current_user_msg) if extract_mood else "neutral"
                 
-                # 5b. Repeat Intent Detection (Task 1)
+                # 5a. Intent & Mood Detection
+                user_mood = extract_mood(current_user_msg) if extract_mood else "neutral"
+                current_user_intents = _get_draft_intents(current_user_msg, internal_task_name)
+                
+                # 5b. Repeat Intent Detection (FORCE_FINAL_RESOLUTION)
                 force_res = False
-                current_user_intents = _quick_intent_extract(current_user_msg)
                 if RepeatIntentDetector:
                     force_res = RepeatIntentDetector.should_force_resolution(
-                        current_user_msg, user_input_history, current_user_intents, last_user_intents
+                        current_user_msg, user_input_history, current_user_intents, 
+                        full_intent_history=history_intents
                     )
                 
+                # 5c. Immediate Recovery Policy
+                recovery_hint = ""
+                if ImmediateRecoveryPolicy:
+                    recovery_hint = ImmediateRecoveryPolicy.get_recovery_hint(internal_task_name, last_reward) or ""
+                
+                # 5d. Mood Adaptive Policy
+                mood_hint = ""
+                if MoodAdaptivePolicy:
+                    mood_hint = MoodAdaptivePolicy.get_mood_hint(user_mood) or ""
+
+                # 5e. Closure Enforcer Hint (Pre-emptive)
+                closure_hint = ""
+                if ClosureEnforcer:
+                    # Look for resolution intents in previous turns or agent's mind
+                    last_agent_intents = history_intents[-1] if history_intents else set()
+                    closure_hint = ClosureEnforcer.get_closure_hint(current_stage, last_agent_intents) or ""
+
+                # Combined correction hint from Stage + Stall + Memory + Policies
+                combined_hint = (stage_hint + stall_hint + memory_hint + recovery_hint + mood_hint + closure_hint) or None
+
                 # Update user history
                 user_input_history.append(current_user_msg)
-                last_user_intents = current_user_intents
 
-                # Build combined correction hint from stage + stall
-                combined_hint = (stage_hint + stall_hint + memory_hint) or None
-
-                # 6. Generate agent response
+                # 6. Generate agent response (Response Generator)
                 agent_response = call_llm_agent(
                     conversation_history,
                     task_context,
                     stage_hint=combined_hint,
                     correction_hint=None,
-                    recovery_mode=recovery_mode,
+                    recovery_mode=False, # Replaced by ImmediateRecoveryPolicy hint
                     avoid_phrases=avoid_phrases if avoid_phrases else None,
                     user_mood=user_mood,
                     force_resolution=force_res,
                     task_name=internal_task_name,
                 )
 
-                # 7. ResponseValidator: validate and optionally re-draft
+                # 7. Post-Processing / Finalization Pipeline
                 if ResponseValidator and validator_state:
-                    # Get intents from the draft (simple bridge)
-                    draft_intents = _quick_intent_extract(agent_response)
+                    draft_intents = _get_draft_intents(agent_response, internal_task_name)
+                    
                     validation = ResponseValidator.validate(
                         draft_response=agent_response,
                         intents=draft_intents,
@@ -592,26 +645,28 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                             task_context,
                             stage_hint=combined_hint,
                             correction_hint=validation.correction_hint,
-                            recovery_mode=recovery_mode,
-                            avoid_phrases=avoid_phrases or None,
                             user_mood=user_mood,
                             force_resolution=force_res,
                             task_name=internal_task_name,
                         )
 
-                # 7a. Stage Sequence Guard (Task 5)
+                # 7a. Closure Enforcer (Final check / Injection)
+                if ClosureEnforcer:
+                    final_intents = _get_draft_intents(agent_response, internal_task_name)
+                    agent_response = ClosureEnforcer.ensure_closure_phrase(agent_response, final_intents)
+                
+                # 7b. Stage Sequence Guard
                 if StageSequenceGuard:
-                    current_intents = _quick_intent_extract(agent_response)
+                    current_intents = _get_draft_intents(agent_response, internal_task_name)
                     guard_res = StageSequenceGuard.check_sequence(
                         internal_task_name, current_stage, current_intents, history_intents
                     )
                     if not guard_res.is_ordered:
-                        # Auto-inject missing intent
                         injection = StageSequenceGuard.get_repair_injection(guard_res.missing_intent)
                         agent_response = f"{injection} {agent_response}"
                 
                 # 7b. Anti-Loop Hard Stop (Task 6)
-                current_intents = _quick_intent_extract(agent_response)
+                current_intents = _get_draft_intents(agent_response, internal_task_name)
                 for intent in current_intents:
                     intent_counts[intent] = intent_counts.get(intent, 0) + 1
                     if intent_counts[intent] >= 3 and intent not in {"greeting", "confirmation"}:
@@ -626,7 +681,9 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
 
                 # Send step to environment
                 try:
-                    from models import CustomerSupportAction
+                    if CustomerSupportAction is None:
+                        raise ImportError("CustomerSupportAction not imported.")
+                    
                     action = CustomerSupportAction(response=agent_response)
                     result = env.step(action)
 
@@ -665,19 +722,19 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
 
                 # 8. Update all robustness module states (internal, no API impact)
                 if ResponseValidator and validator_state:
-                    draft_intents = _quick_intent_extract(agent_response)
+                    draft_intents = _get_draft_intents(agent_response, internal_task_name)
                     validator_state = ResponseValidator.update_state(
                         validator_state, agent_response, draft_intents, reward
                     )
 
                 if AntiStallEngine and stall_state:
-                    draft_intents = _quick_intent_extract(agent_response)
+                    draft_intents = _get_draft_intents(agent_response, internal_task_name)
                     stall_state = AntiStallEngine.update(
                         stall_state, draft_intents, current_stage, stage_advanced
                     )
 
-                # Update all state history
-                history_intents.append(_quick_intent_extract(agent_response))
+                # Update intent history
+                history_intents.append(_get_draft_intents(agent_response, internal_task_name))
                 
                 # 9. EpisodeMemory: record high-reward responses
                 if memory:

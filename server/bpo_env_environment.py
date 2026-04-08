@@ -948,6 +948,7 @@ class EpisodeState:
     # Failure counters (relaxed limits)
     consecutive_failures: int = 0           # wrong-intent steps in a row
     consecutive_repetitions: int = 0        # repeated response steps
+    low_reward_streak: int = 0              # steps in a row with < 0.3 reward (Task 5.C)
     stall_steps: int = 0                    # steps without advancing current stage
     # Resolution tracking
     resolved: bool = False
@@ -1041,11 +1042,12 @@ def _compute_step_reward(
     stage_index: int = 0,
     stall_count: int = 0,
     detected_intents_dict: Dict[str, Any] = None,
-    history_intents: List[Set[str]] = None,      # Added for sequence check
-    last_reward: float = 1.0,                     # Added for recovery bonus
+    history_intents: Optional[List[Set[str]]] = None,
+    last_reward: float = 1.0,
+    low_reward_streak: int = 0,
 ) -> Tuple[float, float, float, float, str]:
     """
-    Compute step reward using tri-partite formula.
+    Core Step Reward Function (v4 — Sharpened).
     Returns (step_reward, rule_score [0,1], completeness_score [0,1],
              sequence_score [0,1], reason_string).
 
@@ -1265,6 +1267,7 @@ def _compute_step_reward(
         customer_interaction_data=None,
         last_reward=last_reward,
         is_ordered=is_ordered,
+        low_reward_streak=low_reward_streak,
     )
 
 
@@ -1647,8 +1650,15 @@ class CustomerSupportEnvironment(Environment):
                 detected_intents_dict=detected_intents,
                 history_intents=[set(h) for h in ep.intent_history],
                 last_reward=ep.trajectory[-1]["reward"] if ep.trajectory else 1.0,
+                low_reward_streak=ep.low_reward_streak,
             )
         )
+
+        # Update streak counter
+        if step_reward < 0.3:
+            ep.low_reward_streak += 1
+        else:
+            ep.low_reward_streak = 0
 
         # Track for next-step recovery
         ep.prev_step_was_wrong = (not stage_accepted and not rep_flag)
