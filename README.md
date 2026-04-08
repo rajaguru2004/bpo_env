@@ -281,6 +281,12 @@ python3 run_scenarios.py --url https://rajaguru2004-bpo-env.hf.space --task orde
 
 * 🧠 **Intent-Aware Understanding**
   * Detects: `empathy`, `escalation`, `refund`, `replacement`, `tracking info`
+  * **Intents Analysis Layer:** Multi-intent classification system that validates presence and quality of multiple signals in a single response.
+
+* 💡 **Stage-Aware AI Hints**
+  * Provides contextual guidance for agents based on the current conversation stage.
+  * Helps agents navigate complex workflows and adhere to required SOPs.
+  * Populated on easy tasks to aid learning and reinforce correct behavior.
 
 * 🚫 **Anti-Cheating Mechanisms**
   * Prevents skipping required steps
@@ -362,6 +368,20 @@ User Input → Agent Response → Environment Step Engine
   * task completion
   * required intents detected
   * proper closure
+
+---
+
+### 🟡 Intents Analysis
+
+* **Multi-Intent Signal Detection**: Evaluates responses for multiple required signals (e.g., matching both empathy and resolution in one turn).
+* **Confidence-Weighted Evaluation**: Uses confidence scores to differentiate between tentative and strong intent matches.
+
+---
+
+### 🟠 Stage-Aware Hints
+
+* **Real-time Guidance**: Provides dynamic hints to the agent based on the current state and stage.
+* **Instruction Following**: Measures the agent's ability to follow SOP-specific guidance provided by the environment.
 
 ---
 
