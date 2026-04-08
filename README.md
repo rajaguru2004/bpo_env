@@ -27,9 +27,13 @@ tags:
 
 This project is a **multi-task reinforcement learning (RL) environment** designed to **simulate and evaluate customer support agent behavior** across real-world scenarios.
 
+> [!IMPORTANT]
+> **This is NOT just a chatbot or an evaluation tool.**
+> It is a **controlled, deterministic, behavior-enforcing RL environment** that actively ensures agents follow structured workflows.
+
 Unlike traditional chatbot systems that only generate responses, this environment focuses on:
 
-> 🎯 **Evaluating whether an agent behaves correctly — not just what it says**
+> 🎯 **Evaluating and enforcing** whether an agent behaves correctly — not just what it says
 
 ---
 
@@ -47,10 +51,15 @@ Unlike traditional chatbot systems that only generate responses, this environmen
 
 - [🌐 Deployed Environment (HuggingFace)](#-deployed-environment-huggingface)
 - [🔥 Key Features](#-key-features)
+  - [🧠 Advanced Agent Control & Recovery System](#-advanced-agent-control--recovery-system)
+  - [🎯 Deterministic Behavior Enforcement Layer](#-deterministic-behavior-enforcement-layer)
+  - [🧠 Adaptive Response Intelligence](#-adaptive-response-intelligence)
+  - [⚡ Stress-Tested Robustness System](#-stress-tested-robustness-system)
 - [🏗️ System Architecture](#️-system-architecture)
 - [🧪 Supported Scenarios](#-supported-scenarios)
 - [📊 Evaluation Metrics](#-evaluation-metrics)
 - [⚖️ Note on Evaluation Approach](#️-note-on-evaluation-approach)
+- [🏆 What Makes This System Unique](#-what-makes-this-system-unique)
 - [⚡ Future Roadmap](#-future-roadmap)
 - [🧰 Tech Stack](#-tech-stack)
 - [👥 Team](#-team--skill-hive)
@@ -324,6 +333,90 @@ python3 run_scenarios.py --url https://rajaguru2004-bpo-env.hf.space --task orde
 
 ---
 
+### 🧠 Advanced Agent Control & Recovery System
+
+* ⚡ **Immediate Recovery Engine**
+  * Detects low-quality responses (reward < 0.3)
+  * Forces corrective behavior in the **very next step**
+  * Ensures fast transition: failure → resolution → closure
+
+* 🔁 **Repeat Intent Detection**
+  * Identifies repeated user queries using semantic similarity
+  * Activates **forced resolution mode** to prevent loops
+
+* 🚫 **Anti-Stalling Engine**
+  * Tracks repeated information requests
+  * Prevents agents from asking unnecessary questions
+  * Forces progression toward resolution
+
+* 🧠 **Context-Aware Response Correction**
+  * Dynamically injects missing intents (e.g., empathy, resolution)
+  * Ensures compliance with task-specific SOPs
+
+---
+
+### 🎯 Deterministic Behavior Enforcement Layer
+
+Unlike traditional LLM systems, this environment actively **controls agent behavior** instead of passively evaluating it.
+
+* ✅ **Stage Policy Enforcer**
+  * Guarantees required intents per stage (e.g., empathy → tracking → closure)
+
+* 🧩 **Sequence Guard**
+  * Enforces correct ordering of actions
+  * Prevents skipping critical steps (e.g., no refund without escalation)
+
+* 🏁 **Auto-Closure Enforcement**
+  * Ensures every successful interaction ends with proper closure
+  * Eliminates incomplete conversations
+
+---
+
+### 🧠 Adaptive Response Intelligence
+
+The agent behavior is dynamically adjusted based on context:
+
+* 🎭 **Mood-Aware Responses**
+  * Angry users → faster, action-oriented replies
+  * Neutral users → balanced guidance
+
+* 🔄 **Response Diversification**
+  * Avoids repetitive phrasing using controlled variation
+
+* 📊 **State-Aware Behavior**
+  * Responses adapt based on:
+    * previous failures
+    * current stage
+    * detected intents
+
+---
+
+### ⚡ Stress-Tested Robustness System
+
+The environment includes an advanced **stress-testing framework** designed to simulate real-world unpredictable user behavior:
+
+* 🔊 **Noisy Input Handling**
+  * Handles garbled, incomplete, and ambiguous queries
+
+* 🔁 **Repeated Prompt Handling**
+  * Detects and resolves repeated user queries without looping
+
+* 🔄 **Contradiction Handling**
+  * Adapts dynamically when users change intent mid-conversation
+
+* 😡 **Mood Swing Adaptation**
+  * Detects emotional escalation and accelerates resolution
+
+* 🚀 **Guaranteed Recovery**
+  * Ensures no scenario remains stuck in low-reward states
+  * Agents recover within **1–2 steps**
+
+> ✅ All stress scenarios validated with **zero collapse and no infinite loops**
+
+---
+
+---
+
 ## 🏗️ System Architecture
 
 ![System Architecture](archi_final.png)
@@ -437,6 +530,10 @@ This environment utilizes a **deterministic, rule-based, and intent-driven evalu
 * ✔️ Detects stalling patterns
 * ✔️ Supports recovery flows
 * ✔️ Prevents reward exploitation
+* ✔️ Immediate recovery from low-quality responses
+* ✔️ Repeat query detection and forced resolution
+* ✔️ Guaranteed closure after resolution
+* ✔️ Mood-adaptive response acceleration
 
 ---
 
@@ -501,6 +598,21 @@ This system focuses on:
 * 👤 Raja Guru R
 * 👤 Prasanna S
 * 👤 Hariharan P
+
+---
+
+### 🏆 What Makes This System Unique
+
+This project goes beyond traditional conversational AI systems:
+
+* ❌ Not just response generation
+* ❌ Not just evaluation
+* ✅ **Behavior enforcement under structured workflows**
+* ✅ **Deterministic, reproducible scoring**
+* ✅ **Real-time correction of agent mistakes**
+* ✅ **Stress-tested reliability across edge cases**
+
+> 💡 The system doesn’t just measure performance — it actively ensures correct behavior.
 
 ---
 
