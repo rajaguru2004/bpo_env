@@ -257,12 +257,10 @@ def _resolve_server_url() -> str:
             return IMAGE_NAME
         else:
             # Docker image tag — start container directly via docker run
-            port = SERVER_URL.split(":")[-1].rstrip("/") if ":" in SERVER_URL else "8000"
-            print(f"[INFO] Starting Docker container: {IMAGE_NAME} on port {port}", file=sys.stderr, flush=True)
             subprocess.Popen(
                 [
                     "docker", "run", "--rm", "-d",
-                    "-p", f"{port}:{port}",
+                    "-p", "8000:8000",
                     "--name", "openenv-bpo-inference",
                     IMAGE_NAME,
                 ],
@@ -272,7 +270,6 @@ def _resolve_server_url() -> str:
             if not wait_for_server(SERVER_URL, timeout=30):
                 print("[ERROR] Docker container failed to start within 30s.", file=sys.stderr, flush=True)
                 sys.exit(1)
-            print(f"[INFO] Docker server ready at {SERVER_URL}", file=sys.stderr, flush=True)
             return SERVER_URL
 
     # Try the configured SERVER_URL first (already running server)
@@ -280,7 +277,6 @@ def _resolve_server_url() -> str:
         return SERVER_URL
 
     # Last resort: spawn uvicorn locally from source
-    print("[INFO] Starting local uvicorn server …", file=sys.stderr, flush=True)
     subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
