@@ -1,3 +1,4 @@
+# Force push: 2026-04-08
 spec_version: 1
 
 name: bpo_env
@@ -8,7 +9,7 @@ description: >
   handling real-world customer service scenarios across three difficulty levels.
 
 tasks:
-  - id: order_status
+  - id: task_easy
     name: order_status
     difficulty: easy
     max_steps: 10
@@ -17,7 +18,7 @@ tasks:
       type: llm
       prompt_template: "Score this 0.0 to 1.0: Did the agent provide the order tracking number, shipment status, and estimated delivery date in a professional and helpful manner? Response: {response}"
 
-  - id: damaged_product
+  - id: task_medium
     name: damaged_product
     difficulty: medium
     max_steps: 15
@@ -26,7 +27,7 @@ tasks:
       type: llm
       prompt_template: "Score this 0.0 to 1.0: Did the agent apologize, show empathy, and offer a clear replacement or refund resolution with a timeline for a damaged product complaint? Response: {response}"
 
-  - id: escalation
+  - id: task_hard
     name: escalation
     difficulty: hard
     max_steps: 20

@@ -51,6 +51,12 @@ TASK_CONFIGS: Dict[str, TaskConfig] = {
     ),
 }
 
+# Aliases for the hackathon validator (task ids vs names)
+TASK_CONFIGS["task_easy"]   = TASK_CONFIGS["order_status"]
+TASK_CONFIGS["task_medium"] = TASK_CONFIGS["damaged_product"]
+TASK_CONFIGS["task_hard"]   = TASK_CONFIGS["escalation"]
+
+
 DEFAULT_TASK = "order_status"
 
 
@@ -270,3 +276,9 @@ TASKS: Dict[str, Any] = {
         "enabled": True,
     },
 }
+
+# Aliases for the hackathon validator (task ids vs names)
+TASKS["task_easy"]   = TASKS["order_status"]
+TASKS["task_medium"] = TASKS["damaged_product"]
+TASKS["task_hard"]   = TASKS["escalation"]
+
