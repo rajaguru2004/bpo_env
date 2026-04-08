@@ -106,6 +106,9 @@ try:
     from server.stage_policy_enforcer import StagePolicyEnforcer
     from server.anti_stall_engine import AntiStallEngine, AntiStallState
     from server.episode_memory import EpisodeMemory
+    from server.repeat_intent_detector import RepeatIntentDetector
+    from server.stage_sequence_guard import StageSequenceGuard
+    from server.intents import extract_mood, extract_intents, get_bridge_intents
 except ImportError:
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -113,6 +116,9 @@ except ImportError:
         from server.stage_policy_enforcer import StagePolicyEnforcer
         from server.anti_stall_engine import AntiStallEngine, AntiStallState
         from server.episode_memory import EpisodeMemory
+        from server.repeat_intent_detector import RepeatIntentDetector
+        from server.stage_sequence_guard import StageSequenceGuard
+        from server.intents import extract_mood, extract_intents, get_bridge_intents
     except ImportError:
         ResponseValidator = None
         ResponseValidatorState = None
@@ -120,15 +126,33 @@ except ImportError:
         AntiStallEngine = None
         AntiStallState = None
         EpisodeMemory = None
+        RepeatIntentDetector = None
+        StageSequenceGuard = None
+        extract_mood = None
+        extract_intents = None
+        get_bridge_intents = None
 
-# Phrase diversity bank — rotate to prevent repetition in empathy phrasing
-_EMPATHY_VARIANTS = [
-    "I completely understand your frustration and I sincerely apologize for this experience.",
-    "I am truly sorry for the inconvenience this has caused you.",
-    "I deeply apologize for the trouble you've experienced with us.",
-    "I hear you, and I want you to know we take this very seriously.",
-    "Your experience is unacceptable and I sincerely apologize on behalf of our team.",
-]
+# Phrase diversity banks — Task 3.C
+_PHRASE_POOLS = {
+    "apology": [
+        "I completely understand your frustration and I sincerely apologize for this experience.",
+        "I am truly sorry for the inconvenience this has caused you.",
+        "I deeply apologize for the trouble you've experienced with us.",
+        "Your experience is unacceptable and I sincerely apologize on behalf of our team.",
+        "I hear you, and I want to fix this for you right now."
+    ],
+    "resolution": [
+        "I will process this resolution for you immediately to resolve the issue.",
+        "Let's get this settled right away for you.",
+        "I am taking care of this now so you can have peace of mind.",
+        "To make this right, I'll process the request instantly.",
+    ],
+    "closure": [
+        "Is there anything else I can assist with today?",
+        "I'm here to help if you have further questions.",
+        "Please let me know if there's anything else I can do for you.",
+    ]
+}
 _empathy_rotation_idx = 0
 
 # ---------------------------------------------------------------------------
@@ -247,17 +271,28 @@ def call_llm_agent(
     correction_hint: Optional[str] = None,
     recovery_mode: bool = False,
     avoid_phrases: Optional[List[str]] = None,
+    user_mood: str = "neutral",
+    force_resolution: bool = False,
+    task_name: str = "order_status",
 ) -> str:
     """Call the LLM with conversation history and return the agent's response.
 
     Extended parameters (all internal, never in API output):
-        stage_hint:      Injected by StagePolicyEnforcer for current stage rules.
-        correction_hint: Injected by ResponseValidator when draft fails validation.
-        recovery_mode:   True when last step reward < 0.3 — forces apology + recovery.
-        avoid_phrases:   Diversity controller hint (suppress repetitive phrasing).
+        user_mood:       Detected mood (angry, confused, neutral) for tone adjustment.
+        force_resolution: True if RepeatIntentDetector triggers FAST_TRACK mode.
     """
     global _empathy_rotation_idx
     full_system_prompt = AGENT_SYSTEM_PROMPT
+
+    # 1. MOOD-BASED ADJUSTMENT (Task 3.A)
+    if user_mood == "angry":
+        full_system_prompt += "\n\n[MODE]: The customer is ANGRY. Be significantly more direct, concise, and action-first. Avoid fluff."
+    elif user_mood == "confused":
+        full_system_prompt += "\n\n[MODE]: The customer is CONFUSED. Be patient and explanatory. Guide them clearly."
+
+    # 2. FORCE RESOLUTION (Task 1)
+    if force_resolution and RepeatIntentDetector:
+        full_system_prompt += RepeatIntentDetector.get_force_prompt(task_name)
 
     if task_context:
         ctx_str = ", ".join(f"{k}: {v}" for k, v in task_context.items())
@@ -267,14 +302,14 @@ def call_llm_agent(
     if stage_hint:
         full_system_prompt += stage_hint
 
-    # Recovery mode: force apology + recovery flow
+    # Recovery mode (Task 2): force apology + resolution intents
     if recovery_mode:
-        empathy = _EMPATHY_VARIANTS[_empathy_rotation_idx % len(_EMPATHY_VARIANTS)]
+        pool = _PHRASE_POOLS["apology"]
+        empathy = pool[_empathy_rotation_idx % len(pool)]
         _empathy_rotation_idx += 1
         full_system_prompt += (
-            f"\n\n[RECOVERY REQUIRED]: Your last response scored critically low. "
-            f"Begin your response with this recovery phrase: \"{empathy}\" "
-            f"Then immediately provide the correct information or action for this stage."
+            f"\n\n[RECOVERY BOOST]: Your last response was weak. Begin with this exact phrase: "
+            f"\"{empathy}\" Then immediately execute a solution or provide the requested data."
         )
 
     # Diversity controller: notify agent to avoid repeating prior phrasing
@@ -435,6 +470,11 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
     validator_state = ResponseValidatorState() if ResponseValidatorState else None
     stall_state = AntiStallState() if AntiStallState else None
     memory = _episode_memory  # shared across runs within a session
+    
+    # New detectors (Task 1, 5)
+    user_input_history: List[str] = []
+    last_user_intents: Optional[Set[str]] = None
+    history_intents: List[Set[str]] = []
 
     try:
         with env_client as env:
@@ -458,6 +498,9 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
             step = 0
             last_agent_response = ""
             last_reward = 1.0
+            
+            # Anti-Loop (Task 6)
+            intent_counts: Dict[str, int] = {}
 
             # --- STEP LOOP ---
             while not done and step < max_steps:
@@ -497,8 +540,24 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                         for i in range(0, min(len(words) - 2, 15), 3)
                     ]
 
-                # 5. Recovery mode (if last reward < 0.3)
+                # 5. Recovery mode (Task 2)
                 recovery_mode = (last_reward < 0.3)
+                
+                # 5a. Mood detection (Task 3.A)
+                current_user_msg = conversation_history[-1]["content"] if conversation_history else ""
+                user_mood = extract_mood(current_user_msg) if extract_mood else "neutral"
+                
+                # 5b. Repeat Intent Detection (Task 1)
+                force_res = False
+                current_user_intents = _quick_intent_extract(current_user_msg)
+                if RepeatIntentDetector:
+                    force_res = RepeatIntentDetector.should_force_resolution(
+                        current_user_msg, user_input_history, current_user_intents, last_user_intents
+                    )
+                
+                # Update user history
+                user_input_history.append(current_user_msg)
+                last_user_intents = current_user_intents
 
                 # Build combined correction hint from stage + stall
                 combined_hint = (stage_hint + stall_hint + memory_hint) or None
@@ -511,6 +570,9 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                     correction_hint=None,
                     recovery_mode=recovery_mode,
                     avoid_phrases=avoid_phrases if avoid_phrases else None,
+                    user_mood=user_mood,
+                    force_resolution=force_res,
+                    task_name=internal_task_name,
                 )
 
                 # 7. ResponseValidator: validate and optionally re-draft
@@ -525,7 +587,6 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                         state=validator_state,
                     )
                     if not validation.is_valid:
-                        # Re-draft with correction hint injected
                         agent_response = call_llm_agent(
                             conversation_history,
                             task_context,
@@ -533,7 +594,35 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                             correction_hint=validation.correction_hint,
                             recovery_mode=recovery_mode,
                             avoid_phrases=avoid_phrases or None,
+                            user_mood=user_mood,
+                            force_resolution=force_res,
+                            task_name=internal_task_name,
                         )
+
+                # 7a. Stage Sequence Guard (Task 5)
+                if StageSequenceGuard:
+                    current_intents = _quick_intent_extract(agent_response)
+                    guard_res = StageSequenceGuard.check_sequence(
+                        internal_task_name, current_stage, current_intents, history_intents
+                    )
+                    if not guard_res.is_ordered:
+                        # Auto-inject missing intent
+                        injection = StageSequenceGuard.get_repair_injection(guard_res.missing_intent)
+                        agent_response = f"{injection} {agent_response}"
+                
+                # 7b. Anti-Loop Hard Stop (Task 6)
+                current_intents = _quick_intent_extract(agent_response)
+                for intent in current_intents:
+                    intent_counts[intent] = intent_counts.get(intent, 0) + 1
+                    if intent_counts[intent] >= 3 and intent not in {"greeting", "confirmation"}:
+                        # Force intent diversificaton - re-draft one last time
+                        agent_response = call_llm_agent(
+                            conversation_history,
+                            task_context,
+                            stage_hint=combined_hint + f"\n\n[STRICT]: Avoid using the '{intent}' intent again. Transition now.",
+                            user_mood=user_mood,
+                        )
+                        break
 
                 # Send step to environment
                 try:
@@ -587,6 +676,9 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                         stall_state, draft_intents, current_stage, stage_advanced
                     )
 
+                # Update all state history
+                history_intents.append(_quick_intent_extract(agent_response))
+                
                 # 9. EpisodeMemory: record high-reward responses
                 if memory:
                     memory.record(internal_task_name, current_stage, agent_response, reward)

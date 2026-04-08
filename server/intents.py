@@ -172,3 +172,29 @@ def get_bridge_intents(detected_intents: Dict[str, Dict]) -> List[str]:
             bridged.append("greeting")
 
     return bridged
+
+
+# ---------------------------------------------------------------------------
+# Task 3.A: Mood Extractor (angry, confused, neutral)
+# ---------------------------------------------------------------------------
+
+def extract_mood(text: str) -> str:
+    """
+    Classify the customer's mood based on keyword patterns and punctuation.
+    Used internally by inference.py for dynamic tone adjustment.
+    """
+    lower = text.lower()
+    
+    # ── Angry ────────────────────────────────────────────────────────────────
+    angry_kws = ["terrible", "bad", "worst", "unacceptable", "disappointed", 
+                 "annoyed", "ridiculous", "frustrated", "manager", "now!"]
+    if any(kw in lower for kw in angry_kws) or "!!!" in text or text.isupper():
+        return "angry"
+
+    # ── Confused ─────────────────────────────────────────────────────────────
+    confused_kws = ["how", "why", "where", "confused", "not sure", "don't know", 
+                    "understand?", "explain", "help me understand"]
+    if any(kw in lower for kw in confused_kws) or "?" in text:
+        return "confused"
+
+    return "neutral"

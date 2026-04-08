@@ -43,6 +43,8 @@ Unlike traditional chatbot systems that only generate responses, this environmen
   - [Step 4 — Test with LLM Agent](#step-4--test-with-llm-agent-inferncepy)
   - [Step 5 — Run in Test Loop Mode](#step-5--run-in-test-loop-mode)
   - [Step 6 — Run Predefined Scenarios](#step-6--run-predefined-scenario-suite)
+  - [Step 7 — Stress Testing & Robustness](#step-7--stress-testing--robustness)
+
 - [🌐 Deployed Environment (HuggingFace)](#-deployed-environment-huggingface)
 - [🔥 Key Features](#-key-features)
 - [🏗️ System Architecture](#️-system-architecture)
@@ -221,25 +223,48 @@ python run_scenarios.py --url http://localhost:8000 --task order_status
 # Order Status scenarios
 python run_scenarios.py --url http://localhost:8000 --task order_status
 
-# Damaged Product scenarios
-python run_scenarios.py --url http://localhost:8000 --task damaged_product
-
 # Escalation scenarios
 python run_scenarios.py --url http://localhost:8000 --task escalation
+
+# Run ALL tasks sequentially
+python run_scenarios.py --all-tasks
 ```
+
+---
+
+### Step 7 — Stress Testing & Robustness
+
+To verify that the environment and agent can handle noisy, incomplete, or repetitive inputs without collapsing, use the **Stress Test Mode**:
+
+```bash
+# Run stress tests for a specific task
+python run_scenarios.py --task order_status --stress
+
+# Run the complete stress suite across all tasks
+python run_scenarios.py --all-tasks --stress
+```
+
+The stress suite validates three key robustness criteria:
+1. **No Collapse**: Rewards stay stable even with noisy/garbled inputs.
+2. **Anti-Stalling**: Prevents infinite loops when users repeat prompts.
+3. **Recovery**: Ensures agents can "unstick" themselves after a low-reward turn.
+
 
 **Full usage:**
 
 ```
-usage: run_scenarios.py [-h] [--url URL] [--task {order_status,damaged_product,escalation}] [--output OUTPUT]
+usage: run_scenarios.py [-h] [--url URL] [--task {order_status,damaged_product,escalation}] [--output OUTPUT] [--stress] [--all-tasks]
 
 options:
-  --url     URL of the running BPO server (default: http://localhost:8000)
-  --task    Task type to evaluate (choices: order_status, damaged_product, escalation)
-  --output  Path to save JSON results (default: scenario_results.json)
+  --url       URL of the running BPO server (default: http://localhost:8000)
+  --task      Task type to evaluate (choices: order_status, damaged_product, escalation)
+  --output    Path to save JSON results (default: scenario_results.json)
+  --stress    Run stress test scenarios (noisy inputs, incomplete queries, repeated prompts)
+  --all-tasks Run scenarios for all 3 tasks sequentially
 ```
 
 Results are printed as a **structured performance table** and also saved to `scenario_results.json`.
+
 
 ---
 

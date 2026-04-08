@@ -57,11 +57,19 @@ try:
     from server.grader import grade_episode
     from server.intents import extract_intents, get_bridge_intents
     from server.reward_shaper import shape_reward
+    try:
+        from server.stage_sequence_guard import StageSequenceGuard
+    except ImportError:
+        StageSequenceGuard = None
 except ImportError:
     from ..models import CustomerSupportAction, CustomerSupportObservation
     from .grader import grade_episode
     from .intents import extract_intents, get_bridge_intents
     from .reward_shaper import shape_reward
+    try:
+        from .stage_sequence_guard import StageSequenceGuard
+    except ImportError:
+        StageSequenceGuard = None
 
 
 # ===========================================================================
@@ -1032,7 +1040,9 @@ def _compute_step_reward(
     stage_name: str = "",
     stage_index: int = 0,
     stall_count: int = 0,
-    detected_intents_dict: Dict[str, bool] = None,
+    detected_intents_dict: Dict[str, Any] = None,
+    history_intents: List[Set[str]] = None,      # Added for sequence check
+    last_reward: float = 1.0,                     # Added for recovery bonus
 ) -> Tuple[float, float, float, float, str]:
     """
     Compute step reward using tri-partite formula.
@@ -1234,8 +1244,15 @@ def _compute_step_reward(
 
     # ── 5. REWARD SHAPER (internal post-processor) ────────────────────────────
     # RewardShaper applies additional penalty/bonus rules without changing schema.
-    # Debug output goes to stderr only via BPO_ENV_DEBUG env var.
-    shaped = shape_reward(
+    is_ordered = True
+    if StageSequenceGuard and history_intents is not None:
+        guard_res = StageSequenceGuard.check_sequence(
+            task_name, stage_name, intents_set, history_intents
+        )
+        is_ordered = guard_res.is_ordered
+
+    # We call our new shape_reward (v4 internal logic)
+    step_reward = shape_reward(
         base_reward=step_reward,
         is_repetitive=is_repetitive,
         is_stalling=is_stalling,
@@ -1244,10 +1261,11 @@ def _compute_step_reward(
         stage_name=stage_name,
         stage_advanced=stage_advanced,
         detected_intents_dict=detected_intents_dict,
-        customer_interaction_data=None, # Simplified call
         task_name=task_name,
+        customer_interaction_data=None,
+        last_reward=last_reward,
+        is_ordered=is_ordered,
     )
-    step_reward = shaped
 
 
     # ── 6. BUILD REASON ──────────────────────────────────────────────────────
@@ -1627,6 +1645,8 @@ class CustomerSupportEnvironment(Environment):
                 stage_name=ep.stage_name,
                 stage_index=ep.stage_index,
                 detected_intents_dict=detected_intents,
+                history_intents=[set(h) for h in ep.intent_history],
+                last_reward=ep.trajectory[-1]["reward"] if ep.trajectory else 1.0,
             )
         )
 

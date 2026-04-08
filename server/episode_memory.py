@@ -118,19 +118,30 @@ class EpisodeMemory:
     ) -> Optional[str]:
         """
         Build a few-shot injection string for the LLM prompt.
-        Returns None if no examples available.
+        Prioritizes top-tier (reward > 0.9) examples.
         """
         examples = self.retrieve_examples(task_name, stage_name)
         if not examples:
             return None
 
+        # Check if we have any ultra-high quality examples
+        has_elite = any(r >= 0.9 for r, _ in examples)
+        
         lines = [
             f"\n[PAST HIGH-SCORING RESPONSE PATTERNS for '{task_name}' / '{stage_name}' stage]:",
             "The following examples received high scores. Use them as style inspiration "
             "(do NOT copy verbatim — generate a fresh, diverse response):",
         ]
+        
+        if has_elite:
+            lines[1] = (
+                "The following EXCELLENT examples received top marks. Follow their "
+                "structure and professional tone closely while using fresh phrasing:"
+            )
+
         for i, (reward, snippet) in enumerate(examples, 1):
-            lines.append(f"  Example {i} (score={reward:.2f}): \"{snippet}\"")
+            star = " ★" if reward >= 0.9 else ""
+            lines.append(f"  Example {i} (score={reward:.2f}){star}: \"{snippet}\"")
 
         lines.append(
             "Generate a response in a similar quality but with fresh phrasing."

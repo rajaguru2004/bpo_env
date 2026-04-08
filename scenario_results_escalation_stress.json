@@ -327,6 +327,330 @@
       "final_stage": "closure",
       "final_mood": "satisfied",
       "is_resolved": true
+    },
+    {
+      "name": "stress_triple_repeat",
+      "task_name": "escalation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Where is my order? 12345",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic. Response is too brief or vague.",
+          "rule_score": 0.32,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 1,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "WHERE IS MY ORDER? 12345",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Repetitive response.",
+          "rule_score": 0.1,
+          "grader_score": 0.0,
+          "repetition_count": 1,
+          "stall_count": 2,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": "Repetitive content detected"
+        },
+        {
+          "step": 3,
+          "action": "I sincerely apologize. I am processing your request immediately. Your order #12345 is in transit (TRK987654321) and will arrive April 3rd.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "de_escalation",
+          "customer_mood": "neutral",
+          "reward_reason": "Missing: understand.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "information_provide",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": true,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": false,
+      "final_reward": 0.6,
+      "final_grader_score": 0.0,
+      "final_stage": "de_escalation",
+      "final_mood": "neutral",
+      "is_resolved": false
+    },
+    {
+      "name": "stress_contradiction",
+      "task_name": "escalation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "I want a refund.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "de_escalation",
+          "customer_mood": "neutral",
+          "reward_reason": "Response is too brief or vague. Missing: apologize, understand.",
+          "rule_score": 0.24000000000000002,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "Wait, no, just send a replacement instead.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Response is too brief or vague. Missing: days.",
+          "rule_score": 0.36,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": true,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I completely understand. I'll cancel the refund and ship a replacement unit to you today instead.",
+          "reward": 0.5,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 0.8400000000000001,
+          "grader_score": 0.7853125,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "de_escalation",
+            "resolution_offer",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": true,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": true,
+      "final_reward": 0.5,
+      "final_grader_score": 0.7853125,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    },
+    {
+      "name": "stress_mood_swing",
+      "task_name": "escalation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Hi, I have an issue with my order.",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic. Response is too brief or vague.",
+          "rule_score": 0.32,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 1,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "I AM TIRED OF WAITING. FIX THIS NOW OR I'LL CALL MY BANK!!",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic.",
+          "rule_score": 0.6000000000000001,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 2,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I sincerely apologize for the delay and I hear your frustration. I am taking immediate action to resolve this for you.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "de_escalation",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "de_escalation",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": false,
+      "final_reward": 0.6,
+      "final_grader_score": 0.0,
+      "final_stage": "de_escalation",
+      "final_mood": "neutral",
+      "is_resolved": false
     }
   ],
   "validation_failures": []

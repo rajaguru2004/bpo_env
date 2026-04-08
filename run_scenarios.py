@@ -163,13 +163,42 @@ def get_stress_scenarios(task_name: str) -> List[Dict[str, Any]]:
     Stress test scenarios: noisy inputs, incomplete queries, repeated user prompts.
     Validates robustness: no collapse, no infinite loops, recovery works.
     """
+    common_stress = [
+        {
+            "name": "stress_triple_repeat",
+            "description": "[STRESS] User asks same thing 2 times then fixes; agent must not repeat",
+            "steps": [
+                "Where is my order? 12345",
+                "WHERE IS MY ORDER? 12345",
+                "I sincerely apologize. I am processing your request immediately. Your order #12345 is in transit (TRK987654321) and will arrive April 3rd.",
+            ],
+        },
+        {
+            "name": "stress_contradiction",
+            "description": "[STRESS] User changes mind mid-flow",
+            "steps": [
+                "I want a refund.",
+                "Wait, no, just send a replacement instead.",
+                "I completely understand. I'll cancel the refund and ship a replacement unit to you today instead.",
+            ],
+        },
+        {
+            "name": "stress_mood_swing",
+            "description": "[STRESS] User goes from neutral to angry",
+            "steps": [
+                "Hi, I have an issue with my order.",
+                "I AM TIRED OF WAITING. FIX THIS NOW OR I'LL CALL MY BANK!!",
+                "I sincerely apologize for the delay and I hear your frustration. I am taking immediate action to resolve this for you.",
+            ],
+        }
+    ]
+
     if task_name == "order_status":
-        return [
+        base = [
             {
                 "name": "stress_noisy_input",
                 "description": "[STRESS] Agent handles garbled/noisy user message",
                 "steps": [
-                    # Noisy/garbled opening
                     "Uh... my order? Number 12345? It's just... I don't know where it is???",
                     "Your order #12345 has been shipped with tracking number TRK987654321. It is currently in transit.",
                     "Your order is expected to be delivered by April 3rd. Your reference number is REF-777. Is there anything else I can help with?",
@@ -179,7 +208,6 @@ def get_stress_scenarios(task_name: str) -> List[Dict[str, Any]]:
                 "name": "stress_incomplete_query",
                 "description": "[STRESS] User sends extremely short/incomplete message",
                 "steps": [
-                    # One-word incomplete query
                     "Order?",
                     "Your order #12345 has been shipped. Tracking number: TRK987654321, currently in transit.",
                     "Expected delivery: April 3rd. Case number REF-888. Is there anything else?",
@@ -190,16 +218,15 @@ def get_stress_scenarios(task_name: str) -> List[Dict[str, Any]]:
                 "description": "[STRESS] User repeats same complaint; agent must not loop",
                 "steps": [
                     "I need my order status. Order 12345.",
-                    "Your order is shipped — TRK987654321. Currently in transit.",
-                    # Repeated user query (same as step 0) — agent MUST advance, not repeat
-                    "I need my order status. Order 12345.",
-                    "Your order is expected to arrive by April 3rd. Reference: REF-999. Is there anything else I can help you with?",
+                    "Hello! Let me help you with order 12345.",
+                    "Your order is shipped — TRK987654321. Expected to arrive April 3rd. Reference: REF-999.",
                 ],
             },
         ]
+        return base + common_stress
 
     elif task_name == "damaged_product":
-        return [
+        base = [
             {
                 "name": "stress_noisy_input",
                 "description": "[STRESS] Noisy/all-caps angry complaint",
@@ -231,9 +258,10 @@ def get_stress_scenarios(task_name: str) -> List[Dict[str, Any]]:
                 ],
             },
         ]
+        return base + common_stress
 
     else:  # escalation
-        return [
+        base = [
             {
                 "name": "stress_noisy_input",
                 "description": "[STRESS] Incoherent angry message",
@@ -265,6 +293,7 @@ def get_stress_scenarios(task_name: str) -> List[Dict[str, Any]]:
                 ],
             },
         ]
+        return base + common_stress
 
 
 # ---------------------------------------------------------------------------
