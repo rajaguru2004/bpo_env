@@ -32,6 +32,7 @@ from uuid import uuid4
 # Environment variable loading
 # ---------------------------------------------------------------------------
 
+
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
 if os.path.exists(env_path):
     try:
@@ -55,10 +56,12 @@ try:
     from models import CustomerSupportAction, CustomerSupportObservation
     from server.grader import grade_episode
     from server.intents import extract_intents, get_bridge_intents
+    from server.reward_shaper import shape_reward
 except ImportError:
     from ..models import CustomerSupportAction, CustomerSupportObservation
     from .grader import grade_episode
     from .intents import extract_intents, get_bridge_intents
+    from .reward_shaper import shape_reward
 
 
 # ===========================================================================
@@ -944,6 +947,7 @@ class EpisodeState:
     closure_reached: bool = False
     # Recovery tracking
     prev_step_was_wrong: bool = False       # enables recovery bonus next step
+    failure_recovery_active: bool = False   # True when last step reward < 0.3 → force recovery
     # History for repetition detection
     intent_history: List[List[str]] = field(default_factory=list)  # list of intent lists
     response_history: List[str] = field(default_factory=list)       # raw response texts
@@ -1228,7 +1232,25 @@ def _compute_step_reward(
         penalties_log = []
         bonuses_log = []
 
-    # ── 5. BUILD REASON ──────────────────────────────────────────────────────
+    # ── 5. REWARD SHAPER (internal post-processor) ────────────────────────────
+    # RewardShaper applies additional penalty/bonus rules without changing schema.
+    # Debug output goes to stderr only via BPO_ENV_DEBUG env var.
+    shaped = shape_reward(
+        base_reward=step_reward,
+        is_repetitive=is_repetitive,
+        is_stalling=is_stalling,
+        stall_count=stall_count,
+        intents=intents_set,
+        stage_name=stage_name,
+        stage_advanced=stage_advanced,
+        detected_intents_dict=detected_intents_dict,
+        customer_interaction_data=None, # Simplified call
+        task_name=task_name,
+    )
+    step_reward = shaped
+
+
+    # ── 6. BUILD REASON ──────────────────────────────────────────────────────
     if not reason_parts:
         if completeness_score >= 0.9 and intent_score >= 0.9:
             reason = "Correct and complete response."
@@ -1610,6 +1632,11 @@ class CustomerSupportEnvironment(Environment):
 
         # Track for next-step recovery
         ep.prev_step_was_wrong = (not stage_accepted and not rep_flag)
+
+        # Internal failure recovery flag — used by inference.py to force recovery prompt
+        # Does NOT affect any API output or schema fields.
+        ep.failure_recovery_active = (step_reward < 0.3)
+
 
         # ── 8. RECORD TRAJECTORY STEP ─────────────────────────────────────────
         ep.trajectory.append({

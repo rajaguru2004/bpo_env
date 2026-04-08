@@ -1,0 +1,398 @@
+{
+  "meta": {
+    "task_name": "damaged_product",
+    "mode": "stress"
+  },
+  "results": [
+    {
+      "name": "stress_noisy_input",
+      "task_name": "damaged_product",
+      "steps": [
+        {
+          "step": 1,
+          "action": "I am truly sorry to hear your product arrived damaged. I completely understand your frustration.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "empathy",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "de_escalation",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "Could you please confirm your order number so I can check the details?",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "diagnosis",
+          "customer_mood": "satisfied",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_request"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": true,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I will arrange a replacement immediately \u2014 you'll receive the new unit within 3-5 business days.",
+          "reward": 0.99,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": true,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 4,
+          "action": "Your case number is CASE-STRESS-1. Is there anything else I can assist with?",
+          "reward": 0.925,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 1.0,
+          "grader_score": 0.925,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "confirmation"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": true,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 4,
+      "final_done": true,
+      "final_reward": 0.925,
+      "final_grader_score": 0.925,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    },
+    {
+      "name": "stress_incomplete_query",
+      "task_name": "damaged_product",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Damaged.",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic. Response is too brief or vague.",
+          "rule_score": 0.32,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 1,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "I sincerely apologize and I completely understand your frustration. Let me help you right away.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "empathy",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "de_escalation",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "Could you confirm your order number so I can get the replacement started?",
+          "reward": 0.99,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: days.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer",
+            "information_request"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": true,
+            "escalation": false,
+            "closure": false,
+            "information_request": true,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 4,
+          "action": "I will ship a replacement within 3-5 business days. Case: CASE-STRESS-2. Anything else?",
+          "reward": 0.88,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 1.0,
+          "grader_score": 0.88,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer",
+            "confirmation"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": true,
+            "escalation": false,
+            "closure": true,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 4,
+      "final_done": true,
+      "final_reward": 0.88,
+      "final_grader_score": 0.88,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    },
+    {
+      "name": "stress_repeated_user_prompt",
+      "task_name": "damaged_product",
+      "steps": [
+        {
+          "step": 1,
+          "action": "I'm so sorry to hear about the damage. I completely understand and I'll make this right.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "empathy",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "de_escalation",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "I received a damaged product. I want a replacement.",
+          "reward": 0.9,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Response is too brief or vague. Missing: days.",
+          "rule_score": 0.36,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": true,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I will arrange a replacement for your Bluetooth Speaker right away \u2014 expected in 3-5 business days.",
+          "reward": 0.852890625,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 0.36000000000000004,
+          "grader_score": 0.852890625,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_provide",
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": true,
+            "refund": false,
+            "replacement": true,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": true,
+      "final_reward": 0.852890625,
+      "final_grader_score": 0.852890625,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    }
+  ],
+  "validation_failures": []
+}

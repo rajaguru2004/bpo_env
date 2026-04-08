@@ -1,0 +1,333 @@
+{
+  "meta": {
+    "task_name": "escalation",
+    "mode": "stress"
+  },
+  "results": [
+    {
+      "name": "stress_noisy_input",
+      "task_name": "escalation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "I sincerely apologize for this terrible experience. I completely understand your frustration and I take full responsibility.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "de_escalation",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "de_escalation",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "I am escalating this directly to our senior manager who will personally oversee your case.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: refund, days.",
+          "rule_score": 0.36000000000000004,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": true,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "We will process a full refund within 3-5 business days. I assure you this will be prioritised.",
+          "reward": 0.8703124999999999,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 1.0,
+          "grader_score": 0.8703124999999999,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": true,
+      "final_reward": 0.8703124999999999,
+      "final_grader_score": 0.8703124999999999,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    },
+    {
+      "name": "stress_incomplete_query",
+      "task_name": "escalation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Refund. Now.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "de_escalation",
+          "customer_mood": "neutral",
+          "reward_reason": "Response is too brief or vague. Missing: apologize, understand.",
+          "rule_score": 0.24000000000000002,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "I sincerely apologize and I completely understand your frustration. I will process your full refund immediately.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: days.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "de_escalation",
+            "resolution_offer",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": true,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I am escalating this to a senior supervisor as well \u2014 your refund will be processed within 3-5 business days.",
+          "reward": 0.8453124999999999,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 1.0,
+          "grader_score": 0.8453124999999999,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": true,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": true,
+      "final_reward": 0.8453124999999999,
+      "final_grader_score": 0.8453124999999999,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    },
+    {
+      "name": "stress_repeated_user_prompt",
+      "task_name": "escalation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "I sincerely apologize. I take full responsibility for this awful experience.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "de_escalation",
+          "customer_mood": "neutral",
+          "reward_reason": "Missing: understand.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "apology",
+            "greeting"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": true,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "I want a full refund and a manager RIGHT NOW.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: days.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": true,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I am escalating to a senior manager immediately and processing your full refund within 48 hours.",
+          "reward": 0.5,
+          "done": true,
+          "conversation_stage": "closure",
+          "customer_mood": "satisfied",
+          "reward_reason": "Resolved with closure",
+          "rule_score": 1.0,
+          "grader_score": 0.8203124999999999,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "resolution_offer"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": true,
+            "replacement": false,
+            "escalation": true,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": true,
+          "success": true,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": true,
+      "final_reward": 0.5,
+      "final_grader_score": 0.8203124999999999,
+      "final_stage": "closure",
+      "final_mood": "satisfied",
+      "is_resolved": true
+    }
+  ],
+  "validation_failures": []
+}

@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 import textwrap
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 # ---------------------------------------------------------------------------
 # Load .env for local development (ignored when validator injects vars directly)
@@ -95,6 +95,43 @@ from openai import OpenAI  # noqa: E402 — placed here intentionally after env 
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 # ---------------------------------------------------------------------------
+# Robustness module imports (all internal — never affect API output)
+# ---------------------------------------------------------------------------
+_server_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server")
+if _server_dir not in sys.path:
+    sys.path.insert(0, _server_dir)
+
+try:
+    from server.response_validator import ResponseValidator, ResponseValidatorState
+    from server.stage_policy_enforcer import StagePolicyEnforcer
+    from server.anti_stall_engine import AntiStallEngine, AntiStallState
+    from server.episode_memory import EpisodeMemory
+except ImportError:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from server.response_validator import ResponseValidator, ResponseValidatorState
+        from server.stage_policy_enforcer import StagePolicyEnforcer
+        from server.anti_stall_engine import AntiStallEngine, AntiStallState
+        from server.episode_memory import EpisodeMemory
+    except ImportError:
+        ResponseValidator = None
+        ResponseValidatorState = None
+        StagePolicyEnforcer = None
+        AntiStallEngine = None
+        AntiStallState = None
+        EpisodeMemory = None
+
+# Phrase diversity bank — rotate to prevent repetition in empathy phrasing
+_EMPATHY_VARIANTS = [
+    "I completely understand your frustration and I sincerely apologize for this experience.",
+    "I am truly sorry for the inconvenience this has caused you.",
+    "I deeply apologize for the trouble you've experienced with us.",
+    "I hear you, and I want you to know we take this very seriously.",
+    "Your experience is unacceptable and I sincerely apologize on behalf of our team.",
+]
+_empathy_rotation_idx = 0
+
+# ---------------------------------------------------------------------------
 # Agent system prompt
 # ---------------------------------------------------------------------------
 
@@ -111,6 +148,44 @@ AGENT_SYSTEM_PROMPT = textwrap.dedent("""\
 
     Always respond in 2-4 sentences. Be concrete and solution-focused.\
 """)
+
+# ---------------------------------------------------------------------------
+# Module-level EpisodeMemory singleton (shared across tasks in one session)
+# ---------------------------------------------------------------------------
+_episode_memory: Optional[Any] = EpisodeMemory() if EpisodeMemory else None
+
+
+# ---------------------------------------------------------------------------
+# Quick intent extractor (lightweight bridge for robustness modules)
+# Does NOT call the environment — used only before submitting to env.
+# ---------------------------------------------------------------------------
+def _quick_intent_extract(text: str) -> Set[str]:
+    """
+    Fast keyword-based intent extraction for ResponseValidator / AntiStallEngine.
+    Returns a set of bridged intent labels (same namespace as get_bridge_intents).
+    """
+    lower = text.lower()
+    intents: Set[str] = set()
+
+    if any(kw in lower for kw in ["sorry", "apologize", "apology", "apologies"]):
+        intents.add("apology")
+    if any(kw in lower for kw in ["understand", "frustration", "hear you", "appreciate"]):
+        intents.add("de_escalation")
+    if any(kw in lower for kw in ["tracking number", "trk", "order status", "in transit",
+                                    "expected delivery", "delivery date"]):
+        intents.add("information_provide")
+    if any(kw in lower for kw in ["could you", "can you", "please provide",
+                                    "order number", "confirm"]):
+        intents.add("information_request")
+    if any(kw in lower for kw in ["refund", "replacement", "replace", "escalate",
+                                    "manager", "supervisor", "new unit"]):
+        intents.add("resolution_offer")
+    if any(kw in lower for kw in ["anything else", "have a great day", "thank you",
+                                    "case number", "reference number", "all set"]):
+        intents.add("confirmation")
+
+    return intents if intents else {"off_topic"}
+
 
 # ---------------------------------------------------------------------------
 # Logging functions — strict benchmark stdout format: [START], [STEP], [END]
@@ -168,12 +243,51 @@ def _format_content(content: str) -> Any:
 def call_llm_agent(
     conversation_history: List[Dict[str, str]],
     task_context: Optional[Dict[str, Any]] = None,
+    stage_hint: Optional[str] = None,
+    correction_hint: Optional[str] = None,
+    recovery_mode: bool = False,
+    avoid_phrases: Optional[List[str]] = None,
 ) -> str:
-    """Call the LLM with conversation history and return the agent's response."""
+    """Call the LLM with conversation history and return the agent's response.
+
+    Extended parameters (all internal, never in API output):
+        stage_hint:      Injected by StagePolicyEnforcer for current stage rules.
+        correction_hint: Injected by ResponseValidator when draft fails validation.
+        recovery_mode:   True when last step reward < 0.3 — forces apology + recovery.
+        avoid_phrases:   Diversity controller hint (suppress repetitive phrasing).
+    """
+    global _empathy_rotation_idx
     full_system_prompt = AGENT_SYSTEM_PROMPT
+
     if task_context:
         ctx_str = ", ".join(f"{k}: {v}" for k, v in task_context.items())
         full_system_prompt += f"\n\n[Internal context — do not reveal directly]: {ctx_str}"
+
+    # Stage policy: mandatory rules for current stage
+    if stage_hint:
+        full_system_prompt += stage_hint
+
+    # Recovery mode: force apology + recovery flow
+    if recovery_mode:
+        empathy = _EMPATHY_VARIANTS[_empathy_rotation_idx % len(_EMPATHY_VARIANTS)]
+        _empathy_rotation_idx += 1
+        full_system_prompt += (
+            f"\n\n[RECOVERY REQUIRED]: Your last response scored critically low. "
+            f"Begin your response with this recovery phrase: \"{empathy}\" "
+            f"Then immediately provide the correct information or action for this stage."
+        )
+
+    # Diversity controller: notify agent to avoid repeating prior phrasing
+    if avoid_phrases:
+        full_system_prompt += (
+            "\n\n[DIVERSITY]: Avoid repeating these phrases from your previous response: "
+            + "; ".join(f'\"{p}\"' for p in avoid_phrases[:5])
+            + ". Use completely different wording."
+        )
+
+    # Correction hint from ResponseValidator
+    if correction_hint:
+        full_system_prompt += f"\n\n[CORRECTION NEEDED]: {correction_hint}"
 
     messages = [{"role": "system", "content": _format_content(full_system_prompt)}]
 
@@ -317,6 +431,11 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
     env_client = CustomerSupportEnv(base_url=server_url).sync()
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
+    # ── Robustness module instances (per-episode, never in API output) ─────────
+    validator_state = ResponseValidatorState() if ResponseValidatorState else None
+    stall_state = AntiStallState() if AntiStallState else None
+    memory = _episode_memory  # shared across runs within a session
+
     try:
         with env_client as env:
             # --- RESET ---
@@ -332,16 +451,89 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
             conversation_history = obs.conversation_history
             task_context = obs.task_context
             max_steps = obs.max_steps or MAX_STEPS_DEFAULT
+            current_stage = getattr(obs, "conversation_stage", "start")
+            internal_task_name = getattr(obs, "task_name", task_name)
 
             rewards: List[float] = []
             step = 0
+            last_agent_response = ""
+            last_reward = 1.0
 
             # --- STEP LOOP ---
             while not done and step < max_steps:
                 step += 1
 
-                # Agent generates response
-                agent_response = call_llm_agent(conversation_history, task_context)
+                # 1. Stage policy hint (StagePolicyEnforcer)
+                stage_hint = ""
+                if StagePolicyEnforcer:
+                    stage_hint = StagePolicyEnforcer.build_policy_prompt(
+                        internal_task_name, current_stage
+                    )
+
+                # 2. Anti-stall hint (AntiStallEngine)
+                stall_hint = ""
+                if AntiStallEngine and stall_state:
+                    intents_so_far: Set[str] = set()
+                    _hint = AntiStallEngine.get_unstick_hint(
+                        stall_state, intents_so_far, internal_task_name, False
+                    )
+                    if _hint:
+                        stall_hint = f"\n\n{_hint}"
+
+                # 3. EpisodeMemory few-shot hint
+                memory_hint = ""
+                if memory:
+                    _mhint = memory.build_few_shot_hint(internal_task_name, current_stage)
+                    if _mhint:
+                        memory_hint = _mhint
+
+                # 4. Diversity controller: extract key phrases from last response
+                avoid_phrases: List[str] = []
+                if last_agent_response:
+                    # Extract bigrams/trigrams to suppress repetition
+                    words = last_agent_response.split()
+                    avoid_phrases = [
+                        " ".join(words[i:i+3])
+                        for i in range(0, min(len(words) - 2, 15), 3)
+                    ]
+
+                # 5. Recovery mode (if last reward < 0.3)
+                recovery_mode = (last_reward < 0.3)
+
+                # Build combined correction hint from stage + stall
+                combined_hint = (stage_hint + stall_hint + memory_hint) or None
+
+                # 6. Generate agent response
+                agent_response = call_llm_agent(
+                    conversation_history,
+                    task_context,
+                    stage_hint=combined_hint,
+                    correction_hint=None,
+                    recovery_mode=recovery_mode,
+                    avoid_phrases=avoid_phrases if avoid_phrases else None,
+                )
+
+                # 7. ResponseValidator: validate and optionally re-draft
+                if ResponseValidator and validator_state:
+                    # Get intents from the draft (simple bridge)
+                    draft_intents = _quick_intent_extract(agent_response)
+                    validation = ResponseValidator.validate(
+                        draft_response=agent_response,
+                        intents=draft_intents,
+                        task_name=internal_task_name,
+                        stage_name=current_stage,
+                        state=validator_state,
+                    )
+                    if not validation.is_valid:
+                        # Re-draft with correction hint injected
+                        agent_response = call_llm_agent(
+                            conversation_history,
+                            task_context,
+                            stage_hint=combined_hint,
+                            correction_hint=validation.correction_hint,
+                            recovery_mode=recovery_mode,
+                            avoid_phrases=avoid_phrases or None,
+                        )
 
                 # Send step to environment
                 try:
@@ -356,6 +548,8 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                     error = None
 
                     grader_score = getattr(step_obs, "grader_score", 0.0)
+                    next_stage = getattr(step_obs, "conversation_stage", current_stage)
+                    stage_advanced = (next_stage != current_stage)
 
                     if done:
                         results["grader_score"] = grader_score
@@ -368,6 +562,8 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                     reward = 0.0
                     done = True
                     rule_score = 0.0
+                    stage_advanced = False
+                    next_stage = current_stage
 
                 rewards.append(reward)
                 log_step(
@@ -377,6 +573,28 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                     done=done,
                     error=error,
                 )
+
+                # 8. Update all robustness module states (internal, no API impact)
+                if ResponseValidator and validator_state:
+                    draft_intents = _quick_intent_extract(agent_response)
+                    validator_state = ResponseValidator.update_state(
+                        validator_state, agent_response, draft_intents, reward
+                    )
+
+                if AntiStallEngine and stall_state:
+                    draft_intents = _quick_intent_extract(agent_response)
+                    stall_state = AntiStallEngine.update(
+                        stall_state, draft_intents, current_stage, stage_advanced
+                    )
+
+                # 9. EpisodeMemory: record high-reward responses
+                if memory:
+                    memory.record(internal_task_name, current_stage, agent_response, reward)
+
+                # Update state for next iteration
+                last_agent_response = agent_response
+                last_reward = reward
+                current_stage = next_stage
 
                 if not done:
                     conversation_history = step_obs.conversation_history

@@ -19,7 +19,7 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Import local the native project client and models
 try:
@@ -156,6 +156,115 @@ def get_scenarios(task_name: str) -> List[Dict[str, Any]]:
     ]
     
     return base_suite + shared
+
+
+def get_stress_scenarios(task_name: str) -> List[Dict[str, Any]]:
+    """
+    Stress test scenarios: noisy inputs, incomplete queries, repeated user prompts.
+    Validates robustness: no collapse, no infinite loops, recovery works.
+    """
+    if task_name == "order_status":
+        return [
+            {
+                "name": "stress_noisy_input",
+                "description": "[STRESS] Agent handles garbled/noisy user message",
+                "steps": [
+                    # Noisy/garbled opening
+                    "Uh... my order? Number 12345? It's just... I don't know where it is???",
+                    "Your order #12345 has been shipped with tracking number TRK987654321. It is currently in transit.",
+                    "Your order is expected to be delivered by April 3rd. Your reference number is REF-777. Is there anything else I can help with?",
+                ],
+            },
+            {
+                "name": "stress_incomplete_query",
+                "description": "[STRESS] User sends extremely short/incomplete message",
+                "steps": [
+                    # One-word incomplete query
+                    "Order?",
+                    "Your order #12345 has been shipped. Tracking number: TRK987654321, currently in transit.",
+                    "Expected delivery: April 3rd. Case number REF-888. Is there anything else?",
+                ],
+            },
+            {
+                "name": "stress_repeated_user_prompt",
+                "description": "[STRESS] User repeats same complaint; agent must not loop",
+                "steps": [
+                    "I need my order status. Order 12345.",
+                    "Your order is shipped — TRK987654321. Currently in transit.",
+                    # Repeated user query (same as step 0) — agent MUST advance, not repeat
+                    "I need my order status. Order 12345.",
+                    "Your order is expected to arrive by April 3rd. Reference: REF-999. Is there anything else I can help you with?",
+                ],
+            },
+        ]
+
+    elif task_name == "damaged_product":
+        return [
+            {
+                "name": "stress_noisy_input",
+                "description": "[STRESS] Noisy/all-caps angry complaint",
+                "steps": [
+                    "I am truly sorry to hear your product arrived damaged. I completely understand your frustration.",
+                    "Could you please confirm your order number so I can check the details?",
+                    "I will arrange a replacement immediately — you'll receive the new unit within 3-5 business days.",
+                    "Your case number is CASE-STRESS-1. Is there anything else I can assist with?",
+                ],
+            },
+            {
+                "name": "stress_incomplete_query",
+                "description": "[STRESS] User only says 'damaged' — agent must probe then resolve",
+                "steps": [
+                    "Damaged.",
+                    "I sincerely apologize and I completely understand your frustration. Let me help you right away.",
+                    "Could you confirm your order number so I can get the replacement started?",
+                    "I will ship a replacement within 3-5 business days. Case: CASE-STRESS-2. Anything else?",
+                ],
+            },
+            {
+                "name": "stress_repeated_user_prompt",
+                "description": "[STRESS] User repeats complaint; agent must not stall",
+                "steps": [
+                    "I'm so sorry to hear about the damage. I completely understand and I'll make this right.",
+                    "I received a damaged product. I want a replacement.",
+                    "I will arrange a replacement for your Bluetooth Speaker right away — expected in 3-5 business days.",
+                    "Your reference number is REF-STRESS-3. Have a great day!",
+                ],
+            },
+        ]
+
+    else:  # escalation
+        return [
+            {
+                "name": "stress_noisy_input",
+                "description": "[STRESS] Incoherent angry message",
+                "steps": [
+                    "I sincerely apologize for this terrible experience. I completely understand your frustration and I take full responsibility.",
+                    "I am escalating this directly to our senior manager who will personally oversee your case.",
+                    "We will process a full refund within 3-5 business days. I assure you this will be prioritised.",
+                    "Your case number is CASE-ESC-STRESS. Is there anything else I can do? Again, I sincerely apologize.",
+                ],
+            },
+            {
+                "name": "stress_incomplete_query",
+                "description": "[STRESS] Customer only says 'refund now' — agent must handle",
+                "steps": [
+                    "Refund. Now.",
+                    "I sincerely apologize and I completely understand your frustration. I will process your full refund immediately.",
+                    "I am escalating this to a senior supervisor as well — your refund will be processed within 3-5 business days.",
+                    "Case number: CASE-ESC-S2. Thank you for your patience. Is there anything else I can help with?",
+                ],
+            },
+            {
+                "name": "stress_repeated_user_prompt",
+                "description": "[STRESS] User repeats refund demand; agent must not loop",
+                "steps": [
+                    "I sincerely apologize. I take full responsibility for this awful experience.",
+                    "I want a full refund and a manager RIGHT NOW.",
+                    "I am escalating to a senior manager immediately and processing your full refund within 48 hours.",
+                    "Case ID: CASE-ESC-S3. Refund confirmed. Is there anything else I can assist you with today?",
+                ],
+            },
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +428,91 @@ def display_summary(results: List[Dict[str, Any]]) -> None:
     print("═" * 78)
 
 
+def run_stress_scenarios(base_url: str, task_name: str, output_file: str) -> None:
+    """Run stress test scenarios and validate robustness criteria."""
+    print("\n" + "═" * 78)
+    print(f"  BPO STRESS TEST — Task: {task_name}")
+    print(f"  Server  : {base_url} | Time: {datetime.now().strftime('%H:%M:%S')}")
+    print("  Validates: no collapse, no infinite loops, recovery within 2 steps")
+    print("═" * 78)
+
+    scenarios = get_stress_scenarios(task_name)
+    results: List[Dict[str, Any]] = []
+    validation_failures: List[str] = []
+
+    client_env = CustomerSupportEnv(base_url=base_url).sync()
+    with client_env as env:
+        for scen in scenarios:
+            res = run_scenario(env, scen, task_name)
+            results.append(res)
+
+            # ── Stress validation checks ──────────────────────────────────────
+            name = scen["name"]
+            steps_data = res.get("steps", [])
+
+            # Check 1: No collapse (all steps should return non-zero reward)
+            zero_reward_steps = [
+                s["step"] for s in steps_data
+                if isinstance(s.get("reward"), (int, float)) and s["reward"] < 0.01
+            ]
+            if zero_reward_steps:
+                validation_failures.append(
+                    f"{name}: COLLAPSE detected at steps {zero_reward_steps}"
+                )
+
+            # Check 2: No infinite loop (stall_count must not exceed 4 in any step)
+            high_stall = [
+                s["step"] for s in steps_data
+                if isinstance(s.get("stall_count"), int) and s["stall_count"] > 4
+            ]
+            if high_stall:
+                validation_failures.append(
+                    f"{name}: INFINITE LOOP risk — stall_count > 4 at steps {high_stall}"
+                )
+
+            # Check 3: Recovery within 2 steps (after a low-reward step)
+            for i, step_d in enumerate(steps_data[:-1]):
+                if isinstance(step_d.get("reward"), (int, float)) and step_d["reward"] < 0.3:
+                    recovery_window = steps_data[i+1:i+3]
+                    recovered = any(
+                        isinstance(s.get("reward"), (int, float)) and s["reward"] >= 0.4
+                        for s in recovery_window
+                    )
+                    if not recovered and recovery_window:
+                        validation_failures.append(
+                            f"{name}: RECOVERY FAILED after low-reward at step {step_d['step']}"
+                        )
+                    break  # only check first low-reward occurrence
+
+    display_summary(results)
+
+    print("\n" + "═" * 78)
+    print("  STRESS VALIDATION RESULTS")
+    print("═" * 78)
+    if not validation_failures:
+        print("  ✅ ALL STRESS CHECKS PASSED — No collapse, loops, or recovery failures")
+    else:
+        print(f"  ❌ {len(validation_failures)} VALIDATION FAILURE(S):")
+        for fail in validation_failures:
+            print(f"     • {fail}")
+    print("═" * 78)
+
+    stress_output = output_file.replace(".json", "_stress.json")
+    try:
+        with open(stress_output, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "meta": {"task_name": task_name, "mode": "stress"},
+                    "results": results,
+                    "validation_failures": validation_failures,
+                },
+                fh, indent=2, default=str
+            )
+        print(f"\n✓ Stress results saved to: {stress_output}")
+    except Exception as exc:
+        print(f"\n[WARNING] Could not save stress output: {exc}")
+
+
 def run_all_scenarios(base_url: str, task_name: str, output_file: str) -> None:
     print("\n" + "═" * 78)
     print(f"  BPO Test Runner Multi-Task v4 — Task: {task_name}")
@@ -344,10 +538,36 @@ def run_all_scenarios(base_url: str, task_name: str, output_file: str) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--url", default=BASE_URL)
-    parser.add_argument("--task", default=TASK_NAME, choices=["order_status", "damaged_product", "escalation"])
-    parser.add_argument("--output", default=OUTPUT_FILE)
+    parser = argparse.ArgumentParser(description="BPO Scenario Test Runner")
+    parser.add_argument("--url", default=BASE_URL, help="Environment server URL")
+    parser.add_argument(
+        "--task", default=TASK_NAME,
+        choices=["order_status", "damaged_product", "escalation"],
+        help="Task to run scenarios for",
+    )
+    parser.add_argument("--output", default=OUTPUT_FILE, help="Output JSON file path")
+    parser.add_argument(
+        "--stress", action="store_true",
+        help="Run stress test scenarios (noisy inputs, incomplete queries, repeated prompts)",
+    )
+    parser.add_argument(
+        "--all-tasks", action="store_true",
+        help="Run scenarios for all 3 tasks sequentially",
+    )
     args = parser.parse_args()
 
-    run_all_scenarios(args.url.rstrip("/"), args.task, args.output)
+    url = args.url.rstrip("/")
+
+    if args.all_tasks:
+        tasks = ["order_status", "damaged_product", "escalation"]
+        for t in tasks:
+            out = args.output.replace(".json", f"_{t}.json")
+            if args.stress:
+                run_stress_scenarios(url, t, out)
+            else:
+                run_all_scenarios(url, t, out)
+    else:
+        if args.stress:
+            run_stress_scenarios(url, args.task, args.output)
+        else:
+            run_all_scenarios(url, args.task, args.output)

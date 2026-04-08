@@ -1,0 +1,363 @@
+{
+  "meta": {
+    "task_name": "order_status",
+    "mode": "stress"
+  },
+  "results": [
+    {
+      "name": "stress_noisy_input",
+      "task_name": "order_status",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Uh... my order? Number 12345? It's just... I don't know where it is???",
+          "reward": 0.30000000000000004,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic.",
+          "rule_score": 0.6000000000000001,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 1,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "Your order #12345 has been shipped with tracking number TRK987654321. It is currently in transit.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "inquiry",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_provide"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": true,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "Your order is expected to be delivered by April 3rd. Your reference number is REF-777. Is there anything else I can help with?",
+          "reward": 0.9820000000000001,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: tracking number.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_provide",
+            "confirmation"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": true,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": true,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": false,
+      "final_reward": 0.9820000000000001,
+      "final_grader_score": 0.0,
+      "final_stage": "resolution",
+      "final_mood": "satisfied",
+      "is_resolved": false
+    },
+    {
+      "name": "stress_incomplete_query",
+      "task_name": "order_status",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Order?",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic. Response is too brief or vague.",
+          "rule_score": 0.32,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 1,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "Your order #12345 has been shipped. Tracking number: TRK987654321, currently in transit.",
+          "reward": 0.6,
+          "done": false,
+          "conversation_stage": "inquiry",
+          "customer_mood": "neutral",
+          "reward_reason": "Correct and complete response.",
+          "rule_score": 1.0,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_provide"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": true,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "Expected delivery: April 3rd. Case number REF-888. Is there anything else?",
+          "reward": 0.9820000000000001,
+          "done": false,
+          "conversation_stage": "resolution",
+          "customer_mood": "satisfied",
+          "reward_reason": "Missing: tracking number.",
+          "rule_score": 0.8,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_provide",
+            "confirmation"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": true,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": true,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 3,
+      "final_done": false,
+      "final_reward": 0.9820000000000001,
+      "final_grader_score": 0.0,
+      "final_stage": "resolution",
+      "final_mood": "satisfied",
+      "is_resolved": false
+    },
+    {
+      "name": "stress_repeated_user_prompt",
+      "task_name": "order_status",
+      "steps": [
+        {
+          "step": 1,
+          "action": "I need my order status. Order 12345.",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic. Response is too brief or vague.",
+          "rule_score": 0.32,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 1,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 2,
+          "action": "Your order is shipped \u2014 TRK987654321. Currently in transit.",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Response is off-topic. Response is too brief or vague.",
+          "rule_score": 0.32,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 2,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        },
+        {
+          "step": 3,
+          "action": "I need my order status. Order 12345.",
+          "reward": 0.1,
+          "done": false,
+          "conversation_stage": "start",
+          "customer_mood": "angry",
+          "reward_reason": "Repetitive response. Warning: stalling \u2014 not advancing stage.",
+          "rule_score": 0.0,
+          "grader_score": 0.0,
+          "repetition_count": 1,
+          "stall_count": 3,
+          "intents_detected": [
+            "off_topic"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": false,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": false,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": "Repetitive content detected"
+        },
+        {
+          "step": 4,
+          "action": "Your order is expected to arrive by April 3rd. Reference: REF-999. Is there anything else I can help you with?",
+          "reward": 0.382,
+          "done": false,
+          "conversation_stage": "inquiry",
+          "customer_mood": "neutral",
+          "reward_reason": "Partial intent match. Missing: tracking number, order status. Provided status info without providing a tracking number. | Provided delivery date before confirming tracking number.",
+          "rule_score": 0.2,
+          "grader_score": 0.0,
+          "repetition_count": 0,
+          "stall_count": 0,
+          "intents_detected": [
+            "information_provide",
+            "confirmation"
+          ],
+          "intents": {
+            "empathy": false,
+            "apology": false,
+            "tracking_info": false,
+            "delivery_info": true,
+            "refund": false,
+            "replacement": false,
+            "escalation": false,
+            "closure": true,
+            "information_request": false,
+            "off_topic": false
+          },
+          "is_resolved": false,
+          "success": false,
+          "failure_reason": ""
+        }
+      ],
+      "total_steps": 4,
+      "final_done": false,
+      "final_reward": 0.382,
+      "final_grader_score": 0.0,
+      "final_stage": "inquiry",
+      "final_mood": "neutral",
+      "is_resolved": false
+    }
+  ],
+  "validation_failures": [
+    "stress_repeated_user_prompt: RECOVERY FAILED after low-reward at step 1"
+  ]
+}
