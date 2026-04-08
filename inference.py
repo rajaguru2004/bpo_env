@@ -18,8 +18,6 @@ Local Dev Extras (.env):
     HF_TOKEN         — Fallback if API_KEY not set
     SERVER_URL       — Used when neither IMAGE_NAME nor LOCAL_IMAGE_NAME is set
     LOCAL_IMAGE_NAME — Fallback docker image for local dev
-    APP_ENV          — 'prod' (default) for benchmark; 'test' for verbose multi-task
-    DEBUG_MODE       — 'true' to print extra info to stderr in prod mode
 """
 
 import os
@@ -72,16 +70,10 @@ IMAGE_NAME = (
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
 # Task to run in single-task benchmark mode
-TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "order_status"))
+TASK_NAME = os.getenv("MY_ENV_V4_TASK", os.getenv("TASK_NAME", "task_easy"))
 
 # Benchmark identifier (matches openenv.yaml name)
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
-
-# APP_ENV: 'prod' for strict benchmark output; 'test' for verbose multi-task output
-APP_ENV = os.getenv("APP_ENV", "prod")
-
-# DEBUG_MODE: emit extra info to stderr in prod mode
-DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
 # Success threshold for score-based resolution
 SUCCESS_SCORE_THRESHOLD = 0.5
@@ -89,8 +81,8 @@ SUCCESS_SCORE_THRESHOLD = 0.5
 # Default max steps if observation doesn't supply it
 MAX_STEPS_DEFAULT = 10
 
-# All task names (used in test/multi-task mode)
-TASKS_TO_RUN = ["order_status", "damaged_product", "escalation"]
+# All task IDs (used in multi-task mode)
+TASKS_TO_RUN = ["task_easy", "task_medium", "task_hard"]
 
 # ---------------------------------------------------------------------------
 # OpenAI-compatible client (resolves after env vars are loaded)
@@ -118,9 +110,7 @@ AGENT_SYSTEM_PROMPT = textwrap.dedent("""\
 """)
 
 # ---------------------------------------------------------------------------
-# Logging functions
-# Benchmark stdout format: [START], [STEP], [END]
-# Extra info goes to stderr (debug) or stdout only in test mode.
+# Logging functions — strict benchmark stdout format: [START], [STEP], [END]
 # ---------------------------------------------------------------------------
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -131,86 +121,33 @@ def log_step(
     step: int,
     action: str,
     reward: float,
-    rule_score: float,
     done: bool,
     error: Optional[str],
-    stage: str = "",
-    mood: str = "",
-    intent: str = "",
 ) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
     action_clean = action.replace("\n", " ").replace("\r", "")
-
-    if APP_ENV == "test":
-        extras = ""
-        if stage:  extras += f" stage={stage}"
-        if mood:   extras += f" mood={mood}"
-        if intent: extras += f" intent={intent}"
-        print(
-            f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
-            f"rule_score={rule_score:.2f} done={done_val}"
-            f"{extras} error={error_val}",
-            flush=True,
-        )
-    else:
-        # Prod/benchmark mode — mandatory fields only to stdout
-        print(
-            f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
-            f"done={done_val} error={error_val}",
-            flush=True,
-        )
-        if DEBUG_MODE:
-            extras = f"rule_score={rule_score:.2f}"
-            if stage:  extras += f" stage={stage}"
-            if mood:   extras += f" mood={mood}"
-            if intent: extras += f" intent={intent}"
-            print(f"   [DEBUG] STEP {step} EXTRAS: {extras}", file=sys.stderr, flush=True)
+    print(
+        f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
+        f"done={done_val} error={error_val}",
+        flush=True,
+    )
 
 
 def log_end(
     success: bool,
     steps: int,
     score: float,
-    avg_rule: float,
     rewards: List[float],
-    grader_score: float = 0.0,
-    failure_reason: str = "",
-    reward_reason: str = "",
 ) -> None:
     # Validator requires score to be in (0.0, 1.0) — clamp to safe range
     score = max(0.01, min(0.99, score))
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-
-    if APP_ENV == "test":
-        failure_str = f" failure_reason={failure_reason}" if failure_reason and not success else ""
-        reason_str  = f" reward_reason={reward_reason}" if reward_reason else ""
-        print(
-            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
-            f"rule_score={avg_rule:.3f} "
-            f"grader_score={grader_score:.3f} rewards={rewards_str}{failure_str}{reason_str}",
-            flush=True,
-        )
-    else:
-        # Prod/benchmark mode — mandatory fields including score
-        print(
-            f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
-            f"rewards={rewards_str}",
-            flush=True,
-        )
-        if DEBUG_MODE:
-            print(
-                f"   [DEBUG] END SUMMARY: rule={avg_rule:.3f} grader={grader_score:.3f} "
-                f"reason={failure_reason} reward_reason={reward_reason}",
-                file=sys.stderr, flush=True,
-            )
-
-
-def debug_log(msg: str) -> None:
-    if APP_ENV == "test":
-        print(f"   {msg}", flush=True)
-    elif DEBUG_MODE:
-        print(f"   [DEBUG] {msg}", file=sys.stderr, flush=True)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
+        f"rewards={rewards_str}",
+        flush=True,
+    )
 
 # ---------------------------------------------------------------------------
 # LLM Agent
@@ -245,19 +182,16 @@ def call_llm_agent(
         messages.append({"role": last["role"], "content": _format_content(last["content"])})
 
     try:
-        debug_log(f"Calling LLM: {MODEL_NAME} ...")
-        t0 = time.time()
         resp = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             max_tokens=300,
             temperature=0.7,
         )
-        debug_log(f"LLM response in {time.time()-t0:.2f}s")
         content = resp.choices[0].message.content.strip()
         return content if content else _fallback_response(conversation_history)
     except Exception as exc:
-        debug_log(f"LLM API error: {exc}")
+        print(f"[WARN] LLM API error: {exc}", file=sys.stderr, flush=True)
         return _fallback_response(conversation_history)
 
 
@@ -317,11 +251,9 @@ def _resolve_server_url() -> str:
     """
     if IMAGE_NAME:
         if IMAGE_NAME.startswith(("http://", "https://")):
-            debug_log(f"Environment URL from IMAGE_NAME: {IMAGE_NAME}")
             return IMAGE_NAME
         else:
             # Docker image — try to use openenv's built-in Docker helper
-            debug_log(f"Starting Docker container from IMAGE_NAME={IMAGE_NAME} ...")
             try:
                 import asyncio
                 from client import CustomerSupportEnv
@@ -331,20 +263,16 @@ def _resolve_server_url() -> str:
                     return env_client.base_url
 
                 url = asyncio.run(_start_docker())
-                debug_log(f"Docker environment started at: {url}")
                 return url
             except Exception as exc:
-                debug_log(f"Docker start via from_docker_image failed: {exc}")
-                debug_log("Falling back to local server startup …")
+                print(f"[WARN] Docker start via from_docker_image failed: {exc}", file=sys.stderr, flush=True)
+                print("[WARN] Falling back to local server startup …", file=sys.stderr, flush=True)
 
     # Try the configured SERVER_URL first
-    debug_log(f"Checking server at {SERVER_URL} ...")
     if wait_for_server(SERVER_URL, timeout=5):
-        debug_log("Server already running.")
         return SERVER_URL
 
     # Last resort: spawn uvicorn locally
-    debug_log("Starting local uvicorn server ...")
     subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
@@ -355,9 +283,8 @@ def _resolve_server_url() -> str:
         stderr=subprocess.DEVNULL,
     )
     if not wait_for_server(SERVER_URL, timeout=25):
-        debug_log("Could not start server. Ensure uvicorn is installed.")
+        print("[ERROR] Could not start server. Ensure uvicorn is installed.", file=sys.stderr, flush=True)
         sys.exit(1)
-    debug_log("Local server started.")
     return SERVER_URL
 
 # ---------------------------------------------------------------------------
@@ -380,20 +307,7 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
         "score": 0.0,
         "avg_rule_score": 0.0,
         "grader_score": 0.0,
-        "final_stage": "",
-        "final_mood": "",
-        "failure_reason": "",
-        "reward_reason": "",
-        "repetition_count": 0,
-        "stall_count": 0,
     }
-
-    if APP_ENV == "test":
-        print(f"\n{'='*65}")
-        print(f"  TASK: {task_name.upper().replace('_', ' ')}")
-        print(f"{'='*65}")
-    else:
-        debug_log(f"Starting task: {task_name}")
 
     env_client = CustomerSupportEnv(base_url=server_url).sync()
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
@@ -406,12 +320,9 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                 obs = result.observation
                 done = result.done
             except Exception as exc:
-                debug_log(f"Reset failed: {exc}")
-                log_end(success=False, steps=0, score=0.01, avg_rule=0.0, rewards=[])
+                print(f"[WARN] Reset failed: {exc}", file=sys.stderr, flush=True)
+                log_end(success=False, steps=0, score=0.01, rewards=[])
                 return results
-
-            if APP_ENV == "test":
-                print(f"  👤 Customer: {obs.customer_message}\n")
 
             conversation_history = obs.conversation_history
             task_context = obs.task_context
@@ -423,13 +334,9 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
             # --- STEP LOOP ---
             while not done and step < max_steps:
                 step += 1
-                if APP_ENV == "test":
-                    print(f"  --- Step {step}/{max_steps} ---")
 
                 # Agent generates response
                 agent_response = call_llm_agent(conversation_history, task_context)
-                if APP_ENV == "test":
-                    print(f"  🤖 Agent: {agent_response}")
 
                 # Send step to environment
                 try:
@@ -443,68 +350,27 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                     done = result.done
                     error = None
 
-                    # State machine fields
-                    stage = getattr(step_obs, "conversation_stage", "")
-                    mood  = getattr(step_obs, "customer_mood", "")
-                    intent = getattr(step_obs, "intent_detected", "")
                     grader_score = getattr(step_obs, "grader_score", 0.0)
-                    reward_reason = getattr(step_obs, "reward_reason", "")
-                    rep_count = getattr(step_obs, "repetition_count", 0)
-                    stall_count = getattr(step_obs, "stall_count", 0)
-                    failure_reason = getattr(step_obs, "failure_reason", "")
 
                     if done:
-                        results["grader_score"]    = grader_score
-                        results["reward_reason"]   = reward_reason
-                        results["final_stage"]     = stage
-                        results["final_mood"]      = mood
-                        results["failure_reason"]  = failure_reason
-                        results["repetition_count"] = rep_count
-                        results["stall_count"]     = stall_count
-
-                    if APP_ENV == "test":
-                        rep_str   = f" ⚠️ REP={rep_count}"   if rep_count   > 0 else ""
-                        stall_str = f" 🛑 STALL={stall_count}" if stall_count > 0 else ""
-                        print(
-                            f"  📊 Reward: {reward:.3f} | Rule: {rule_score:.3f} | "
-                            f"Stage: {stage} | Mood: {mood} | Intent: {intent}"
-                            f"{rep_str}{stall_str} | Resolved: {step_obs.is_resolved}"
-                        )
-                        if not done and step_obs.customer_message:
-                            print(f"  👤 Customer: {step_obs.customer_message}")
-                        if done:
-                            is_success_obs = (
-                                getattr(step_obs, "success", False)
-                                or getattr(step_obs, "is_resolved", False)
-                            )
-                            success_str = "✅ SUCCESS" if is_success_obs else "❌ FAIL"
-                            print(
-                                f"  🏆 Grader: {grader_score:.3f} | {success_str}"
-                                + (f" | Reason: {failure_reason}" if failure_reason else "")
-                                + (f" | {reward_reason}" if reward_reason else "")
-                            )
+                        results["grader_score"] = grader_score
 
                     results["rule_scores"].append(rule_score)
 
                 except Exception as exc:
-                    debug_log(f"Step {step} failed: {exc}")
+                    print(f"[WARN] Step {step} failed: {exc}", file=sys.stderr, flush=True)
                     error = str(exc)
                     reward = 0.0
                     done = True
                     rule_score = 0.0
-                    stage = mood = intent = ""
 
                 rewards.append(reward)
                 log_step(
                     step=step,
                     action=agent_response,
                     reward=reward,
-                    rule_score=rule_score,
                     done=done,
                     error=error,
-                    stage=stage,
-                    mood=mood,
-                    intent=intent,
                 )
 
                 if not done:
@@ -546,17 +412,13 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
             )
 
     except Exception as exc:
-        debug_log(f"Client session failed: {exc}")
+        print(f"[WARN] Client session failed: {exc}", file=sys.stderr, flush=True)
 
     log_end(
         success=results["success"],
         steps=results["steps"],
         score=results["score"],
-        avg_rule=results["avg_rule_score"],
         rewards=results["rewards"],
-        grader_score=results.get("grader_score", 0.0),
-        failure_reason=results.get("failure_reason", ""),
-        reward_reason=results.get("reward_reason", ""),
     )
     return results
 
@@ -566,64 +428,19 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def main():
-    debug_log("=" * 60)
-    debug_log("BPO Customer Support Environment — Inference Runner")
-    debug_log(f"Model        : {MODEL_NAME}")
-    debug_log(f"API_BASE_URL : {API_BASE_URL}")
-    debug_log(f"IMAGE_NAME   : {IMAGE_NAME or '(not set)'}")
-    debug_log(f"SERVER_URL   : {SERVER_URL}")
-    debug_log(f"APP_ENV      : {APP_ENV}")
-    debug_log("=" * 60)
-
     if not API_KEY:
-        debug_log(
-            "WARNING: No API key found (checked API_KEY and HF_TOKEN). "
-            "LLM calls will use fallback responses."
+        print(
+            "[WARN] No API key found (checked API_KEY and HF_TOKEN). "
+            "LLM calls will use fallback responses.",
+            file=sys.stderr,
+            flush=True,
         )
 
     # Resolve where the environment server is / start it
     server_url = _resolve_server_url()
 
-    if APP_ENV == "test":
-        # Multi-task mode — run all 3 tasks and print detailed report
-        all_results = []
-        for task_name in TASKS_TO_RUN:
-            task_result = run_task(task_name, server_url)
-            all_results.append(task_result)
-            time.sleep(1)
-
-        # Final report
-        print("\n" + "=" * 100)
-        print("  FINAL RESULTS SUMMARY")
-        print("=" * 100)
-        print(
-            f"  {'Task':<25} {'Steps':>5} {'Score':>8} {'Grader':>7} {'Rule':>7} "
-            f"{'Mood':>9} {'Success':>8} {'Failure Reason':<20}"
-        )
-        print(
-            f"  {'-'*25} {'-'*5} {'-'*8} {'-'*7} {'-'*7} "
-            f"{'-'*9} {'-'*8} {'-'*20}"
-        )
-        for r in all_results:
-            success_str = "✅ Yes" if r["success"] else "❌ No"
-            fail_str = r.get("failure_reason", "") or "—"
-            print(
-                f"  {r['task_name']:<25} {r['steps']:>5} "
-                f"{r['score']:>8.3f} {r.get('grader_score', 0.0):>7.3f} "
-                f"{r['avg_rule_score']:>7.3f} "
-                f"{r.get('final_mood', 'n/a'):>9} {success_str:>8} {fail_str:<20}"
-            )
-
-        avg_score  = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0.0
-        avg_grader = sum(r.get("grader_score", 0.0) for r in all_results) / len(all_results) if all_results else 0.0
-        success_count = sum(1 for r in all_results if r["success"])
-        print(f"\n  🏆 Overall Average Score:  {avg_score:.3f}")
-        print(f"  🎯 Overall Grader Score:   {avg_grader:.3f}")
-        print(f"  ✅ Tasks Succeeded:        {success_count}/{len(all_results)}")
-        print("\n  Done! All tasks completed.\n")
-    else:
-        # Single-task mode — benchmark runner calls once per task
-        run_task(TASK_NAME, server_url)
+    # Single-task mode — benchmark runner calls once per task
+    run_task(TASK_NAME, server_url)
 
 
 if __name__ == "__main__":
