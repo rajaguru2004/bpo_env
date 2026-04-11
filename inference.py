@@ -129,6 +129,7 @@ try:
     from bpo_env.agent_logic.immediate_recovery_policy import ImmediateRecoveryPolicy
     from bpo_env.agent_logic.closure_enforcer import ClosureEnforcer
     from bpo_env.agent_logic.mood_adaptive_policy import MoodAdaptivePolicy
+    from bpo_env.agent_logic.response_formatter import format_response as _format_response
 except ImportError:
     try:
         # 2. Dynamic fallback (hides from IDE linter but works at runtime)
@@ -166,6 +167,9 @@ except ImportError:
         
         _mood_mod = importlib.import_module("agent_logic.mood_adaptive_policy")
         MoodAdaptivePolicy = _mood_mod.MoodAdaptivePolicy
+
+        _formatter_mod = importlib.import_module("agent_logic.response_formatter")
+        _format_response = _formatter_mod.format_response
         
     except (ImportError, ModuleNotFoundError):
         # 3. Final default fallback
@@ -174,6 +178,7 @@ except ImportError:
         RepeatIntentDetector = StageSequenceGuard = extract_mood = None # type: ignore
         extract_intents = get_bridge_intents = ImmediateRecoveryPolicy = None # type: ignore
         ClosureEnforcer = MoodAdaptivePolicy = None # type: ignore
+        _format_response = None  # type: ignore
 
 # Phrase diversity banks — Task 3.C
 _PHRASE_POOLS = {
@@ -672,6 +677,14 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                             user_mood=user_mood,
                         )
                         break
+
+                # ── Response Formatter (post-processing) ─────────────────────
+                # Apply AFTER all robustness guards, BEFORE env submission.
+                # Adds structured [Action/Stage/Status] block + light cleaning.
+                if _format_response:
+                    agent_response = _format_response(
+                        agent_response, step, done, internal_task_name
+                    )
 
                 # Send step to environment
                 try:
