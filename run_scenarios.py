@@ -52,7 +52,7 @@ except ImportError:
 # Configuration
 # ---------------------------------------------------------------------------
 
-BASE_URL: str = "http://localhost:8000"
+BASE_URL: str = "http://localhost:7860"
 TASK_NAME: str = "order_status"
 OUTPUT_FILE: str = "scenario_results.json"
 

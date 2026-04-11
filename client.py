@@ -23,7 +23,7 @@ class CustomerSupportEnv(
     enabling multi-step interactions with lower latency.
 
     Example:
-        >>> env = CustomerSupportEnv(base_url="http://localhost:8000")
+        >>> env = CustomerSupportEnv(base_url="http://localhost:7860")
         >>> result = env.reset(task_name="order_status")
         >>> print(result.observation.customer_message)
         >>>

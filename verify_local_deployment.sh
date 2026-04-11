@@ -8,7 +8,7 @@ set -e
 # Configuration
 CONTAINER_NAME="bpo_test_server"
 IMAGE_NAME="openenv-bpo:latest"
-PORT=8000
+PORT=7860
 
 echo "============================================================"
 echo "   BPO Environment: Local Docker Verification Suite"

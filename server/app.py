@@ -12,7 +12,7 @@ Endpoints:
     - WS   /ws             WebSocket endpoint for persistent sessions
 
 Usage:
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+    uvicorn server.app:app --reload --host 0.0.0.0 --port 7860
 """
 
 import sys
@@ -226,7 +226,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=7860)
     args = parser.parse_args()
 
     uvicorn.run(app, host=args.host, port=args.port)

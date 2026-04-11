@@ -5,7 +5,7 @@ colorFrom: pink
 colorTo: pink
 sdk: docker
 pinned: false
-app_port: 8000
+app_port: 7860
 base_path: /web
 tags:
   - openenv
@@ -84,7 +84,7 @@ HF_TOKEN="<YOUR_HUGGINGFACE_TOKEN>"
 API_BASE_URL="https://router.huggingface.co/v1"
 MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
 
-SERVER_URL="http://localhost:8000"
+SERVER_URL="http://localhost:7860"
 LOCAL_IMAGE_NAME="openenv-bpo:latest"
 ```
 
@@ -160,15 +160,15 @@ openenv-bpo:latest
 Start the BPO environment server using Docker:
 
 ```bash
-docker run -p 8000:8000 openenv-bpo:latest
+docker run -p 7860:7860 openenv-bpo:latest
 ```
 
-The server will be **up and running at `http://localhost:8000`**.
+The server will be **up and running at `http://localhost:7860`**.
 
 You can verify it's running by opening:
-- **Web Interface:** [http://localhost:8000/web](http://localhost:8000/web)
-- **API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Health Check:** [http://localhost:8000/health](http://localhost:8000/health)
+- **Web Interface:** [http://localhost:7860/web](http://localhost:7860/web)
+- **API Docs:** [http://localhost:7860/docs](http://localhost:7860/docs)
+- **Health Check:** [http://localhost:7860/health](http://localhost:7860/health)
 
 > ✅ Keep this terminal open. The server must be running for all subsequent steps.
 
@@ -194,17 +194,17 @@ By default, this will sequentially execute the full production evaluation for al
 For comprehensive benchmarking with **predefined scripted test cases**, use `run_scenarios.py`:
 
 ```bash
-python run_scenarios.py --url http://localhost:8000 --task order_status
+python run_scenarios.py --url http://localhost:7860 --task order_status
 ```
 
 **Switch tasks using the `--task` flag:**
 
 ```bash
 # Order Status scenarios
-python run_scenarios.py --url http://localhost:8000 --task order_status
+python run_scenarios.py --url http://localhost:7860 --task order_status
 
 # Escalation scenarios
-python run_scenarios.py --url http://localhost:8000 --task escalation
+python run_scenarios.py --url http://localhost:7860 --task escalation
 
 # Run ALL tasks sequentially
 python run_scenarios.py --all-tasks
@@ -236,7 +236,7 @@ The stress suite validates three key robustness criteria:
 usage: run_scenarios.py [-h] [--url URL] [--task {order_status,damaged_product,escalation}] [--output OUTPUT] [--stress] [--all-tasks]
 
 options:
-  --url       URL of the running BPO server (default: http://localhost:8000)
+  --url       URL of the running BPO server (default: http://localhost:7860)
   --task      Task type to evaluate (choices: order_status, damaged_product, escalation)
   --output    Path to save JSON results (default: scenario_results.json)
   --stress    Run stress test scenarios (noisy inputs, incomplete queries, repeated prompts)
@@ -262,7 +262,7 @@ From the **web interface** you can:
 | **Reset** | Reset the environment to start a new episode |
 | **Get State** | View the current conversation state, stage, and mood |
 
-> 💡 To run `inference.py` or `run_scenarios.py` against the deployed environment, simply replace `http://localhost:8000` with the HuggingFace Space URL.
+> 💡 To run `inference.py` or `run_scenarios.py` against the deployed environment, simply replace `http://localhost:7860` with the HuggingFace Space URL.
 
 ```bash
 python3 run_scenarios.py --url https://rajaguru2004-bpo-env.hf.space --task order_status

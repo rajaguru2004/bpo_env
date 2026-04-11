@@ -39,4 +39,4 @@ runtime: fastapi
 app: server.app:app
 type: space
 entrypoint: server/app.py
-port: 8000
+port: 7860

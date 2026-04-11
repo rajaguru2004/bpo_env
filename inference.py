@@ -81,7 +81,7 @@ IMAGE_NAME = (
 )
 
 # Fallback local server URL (used when IMAGE_NAME is also absent)
-SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost:7860")
 
 # Benchmark identifier (matches openenv.yaml name)
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", os.getenv("BENCHMARK", "bpo_env"))
@@ -437,7 +437,7 @@ def _resolve_server_url() -> str:
             subprocess.Popen(
                 [
                     "docker", "run", "--rm", "-d",
-                    "-p", "8000:8000",
+                    "-p", "7860:7860",
                     "--name", "openenv-bpo-inference",
                     IMAGE_NAME,
                 ],
@@ -457,7 +457,7 @@ def _resolve_server_url() -> str:
     subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
-            "server.app:app", "--host", "0.0.0.0", "--port", "8000",
+            "server.app:app", "--host", "0.0.0.0", "--port", "7860",
         ],
         cwd=os.path.dirname(os.path.abspath(__file__)),
         stdout=subprocess.DEVNULL,
