@@ -71,13 +71,16 @@ API_KEY = (
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 
 # Model to use for inference
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen3.5-35B-A3B:novita")
+
+# Fallback Hugging Face Space URL
+HF_SPACE_URL = "https://rajaguru2004-bpo-env.hf.space"
 
 # Docker image / server URL: validator injects IMAGE_NAME; local dev uses LOCAL_IMAGE_NAME
 IMAGE_NAME = (
     os.getenv("IMAGE_NAME")
     or os.getenv("LOCAL_IMAGE_NAME")
-    or ""
+    or HF_SPACE_URL
 )
 
 # Fallback local server URL (used when IMAGE_NAME is also absent)
@@ -424,14 +427,17 @@ def _resolve_server_url() -> str:
 
     Priority:
       1. IMAGE_NAME is an http(s):// URL → use it directly (HF Space or remote server)
+         (Unless it is the fallback HF_SPACE_URL, in which case we prefer local server first)
       2. IMAGE_NAME is a Docker image tag  → start container via `docker run`
-      3. No IMAGE_NAME → check SERVER_URL (already running local server)
-      4. Final fallback: start uvicorn locally from source.
+      3. Already running local server (check SERVER_URL)
+      4. Final fallback: hit the HF_SPACE_URL (replaces local uvicorn spawning)
     """
     if IMAGE_NAME:
         if IMAGE_NAME.startswith(("http://", "https://")):
-            # Remote server / HF Space URL — use directly
-            return IMAGE_NAME
+            # If it's a user-provided URL, return it immediately.
+            # If it's the fallback URL, we save it for later and check local server first.
+            if IMAGE_NAME != HF_SPACE_URL:
+                return IMAGE_NAME
         else:
             # Docker image tag — start container directly via docker run
             subprocess.Popen(
@@ -445,28 +451,16 @@ def _resolve_server_url() -> str:
                 stderr=subprocess.DEVNULL,
             )
             if not wait_for_server(SERVER_URL, timeout=30):
-                print("[ERROR] Docker container failed to start within 30s.", file=sys.stderr, flush=True)
-                sys.exit(1)
+                print(f"[WARN] Docker container failed to start. Falling back to HF Space.", file=sys.stderr, flush=True)
+                return HF_SPACE_URL
             return SERVER_URL
 
-    # Try the configured SERVER_URL first (already running server)
+    # Try the configured SERVER_URL (already running local server)
     if wait_for_server(SERVER_URL, timeout=5):
         return SERVER_URL
 
-    # Last resort: spawn uvicorn locally from source
-    subprocess.Popen(
-        [
-            sys.executable, "-m", "uvicorn",
-            "server.app:app", "--host", "0.0.0.0", "--port", "7860",
-        ],
-        cwd=os.path.dirname(os.path.abspath(__file__)),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    if not wait_for_server(SERVER_URL, timeout=25):
-        print("[ERROR] Could not start server. Ensure uvicorn is installed.", file=sys.stderr, flush=True)
-        sys.exit(1)
-    return SERVER_URL
+    # Final resort: return the HF Space URL instead of spawning uvicorn
+    return HF_SPACE_URL
 
 
 # ---------------------------------------------------------------------------
