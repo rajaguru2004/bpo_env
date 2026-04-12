@@ -1128,7 +1128,8 @@ def _compute_step_reward(
     # rule_score = the pure tripartite score (stage-machine fidelity signal).
     # This reflects ONLY intent classification + completeness + sequence.
     # It does NOT include confidence bonuses, so it truly varies per step.
-    rule_score = tripartite_score
+    # Round to 2 decimal places to avoid floating-point artifacts in the API output.
+    rule_score = round(tripartite_score, 2)
 
     # --- v8 PATCH: CONFIDENCE-AWARE REWARD ADJUSTMENTS (Steps 3-10) ---
     # step_reward starts from the tripartite base and is then tuned by the
@@ -1282,7 +1283,7 @@ def _compute_step_reward(
     else:
         reason = " ".join(reason_parts)
 
-    return step_reward, rule_score, completeness_score, sequence_score, reason
+    return round(step_reward, 2), round(rule_score, 2), round(completeness_score, 2), round(sequence_score, 2), reason
 
 
 def _build_reward_reason(

@@ -35,3 +35,8 @@ server = "bpo_env.server.app:main"
 include-package-data = true
 packages = ["bpo_env", "bpo_env.server", "bpo_env.agent_logic"]
 package-dir = { "bpo_env" = ".", "bpo_env.server" = "server", "bpo_env.agent_logic" = "agent_logic" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

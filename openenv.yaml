@@ -66,5 +66,6 @@ tasks:
 runtime: fastapi
 app: server.app:app
 type: space
+sdk: docker
 entrypoint: server/app.py
 port: 7860

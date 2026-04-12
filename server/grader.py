@@ -60,6 +60,8 @@ MAX_STAGE_DEPTH = 4  # closure is always depth 4
 # Below this ratio, speed_factor degrades linearly toward 0.
 _EFFICIENCY_SPEED_THRESHOLD = 0.40   # 40% of max_steps is minimum for full efficiency credit
 _EFFICIENCY_MAX = 0.15
+_EFFICIENCY_FLOOR = 0.05             # Minimum credit for any resolved episode (prevents
+                                     # penalising thorough hard-task agents who use all steps)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +118,10 @@ def grade_episode(
     if resolved and steps_taken > 0:
         ratio = steps_taken / max(max_steps, 1)
         speed_factor = min(ratio / _EFFICIENCY_SPEED_THRESHOLD, 1.0)
-        efficiency_score = speed_factor * max(0.0, _EFFICIENCY_MAX * (1.0 - ratio))
+        raw_eff = speed_factor * max(0.0, _EFFICIENCY_MAX * (1.0 - ratio))
+        # Apply floor: resolved episodes always get at least _EFFICIENCY_FLOOR credit.
+        # Without this, agents that use all max_steps (common in hard tasks) get 0.
+        efficiency_score = max(raw_eff, _EFFICIENCY_FLOOR)
     else:
         efficiency_score = 0.0
 

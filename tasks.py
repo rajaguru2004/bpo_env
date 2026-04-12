@@ -82,12 +82,20 @@ _MAX_STAGE_DEPTH = 4
 # Efficiency tuning
 _EFFICIENCY_SPEED_THRESHOLD = 0.40
 _EFFICIENCY_MAX = 0.15
+_EFFICIENCY_FLOOR = 0.05   # Minimum efficiency credit for any resolved episode
 
 # Mood score mapping
 _MOOD_SCORE: Dict[str, float] = {
     "satisfied": 0.10,
     "neutral":   0.05,
     "angry":     0.00,
+}
+
+# Required intents per task for intent-coverage bonus
+_TASK_REQUIRED_INTENTS: Dict[str, List[str]] = {
+    "order_status":    ["tracking_info", "delivery_info"],
+    "damaged_product": ["empathy", "replacement"],
+    "escalation":      ["empathy", "escalation", "refund"],
 }
 
 
@@ -161,10 +169,14 @@ def grade_episode(task_name: str, trajectory: Any) -> float:
         resolution_score = 0.15 * (depth / _MAX_STAGE_DEPTH)
 
     # ── 2. Efficiency (0.0 – 0.15) ───────────────────────────────────────────
+    # Bell-curve: rises to 1.0 at 40% of max_steps, then decays.
+    # Floor of _EFFICIENCY_FLOOR ensures resolved episodes always get some credit
+    # regardless of how many steps were used (prevents punishing thorough agents).
     if resolved and steps_taken > 0:
         ratio        = steps_taken / max(max_steps, 1)
         speed_factor = min(ratio / _EFFICIENCY_SPEED_THRESHOLD, 1.0)
-        efficiency_score = speed_factor * max(0.0, _EFFICIENCY_MAX * (1.0 - ratio))
+        raw_eff      = speed_factor * max(0.0, _EFFICIENCY_MAX * (1.0 - ratio))
+        efficiency_score = max(raw_eff, _EFFICIENCY_FLOOR)
     else:
         efficiency_score = 0.0
 
@@ -178,8 +190,38 @@ def grade_episode(task_name: str, trajectory: Any) -> float:
     else:
         quality_score = 0.0
 
-    # ── Total (max = 0.45 + 0.15 + 0.10 + 0.15 = 0.85) ──────────────────────
-    total = resolution_score + efficiency_score + mood_score + quality_score
+    # ── 5. Intent coverage bonus (0.0 – 0.15) ────────────────────────────────
+    # Rewards whether the WHOLE episode addressed every required signal at least
+    # once. Distinct from step-level rewards. Uses plain bool flags from steps
+    # (compatible with both dict and list trajectory formats).
+    task_key = task_name.replace("task_easy", "order_status") \
+                        .replace("task_medium", "damaged_product") \
+                        .replace("task_hard", "escalation")
+    required = _TASK_REQUIRED_INTENTS.get(task_key, [])
+    if required and steps:
+        covered = 0
+        for ri in required:
+            for s in steps:
+                intents_in_step = s.get("detected_intents", {})
+                raw = intents_in_step.get(ri)
+                if raw is None:
+                    # Legacy bool flags directly on the step dict
+                    if s.get(ri, False):
+                        covered += 1
+                        break
+                elif isinstance(raw, dict):
+                    if raw.get("present", False) and raw.get("confidence", 0.0) >= 0.5:
+                        covered += 1
+                        break
+                elif raw:  # plain bool
+                    covered += 1
+                    break
+        intent_bonus = 0.15 * (covered / len(required))
+    else:
+        intent_bonus = 0.0
+
+    # ── Total (max = 0.45 + 0.15 + 0.10 + 0.15 + 0.15 = 1.00) ──────────────
+    total = resolution_score + efficiency_score + mood_score + quality_score + intent_bonus
 
     # Clamp to strict (0.01, 0.99) — validator rejects exactly 0.0 and 1.0
     # Round to 2 decimal places for consistent output
@@ -199,10 +241,14 @@ def grade_order_status(response: str, state: dict = None) -> float:
     Scoring (no free base — blank responses score 0.01):
       +0.30  tracking number / tracking ID provided
       +0.25  shipment status clearly communicated
-      +0.20  expected / estimated delivery date mentioned
+      +0.20  expected / estimated delivery date mentioned (specific phrases only)
       +0.15  professional greeting or closure phrase
       +0.10  case / reference number given
     Total max = 1.00  (clamped to [0.01, 0.99])
+
+    Note: Generic month/auxiliary words excluded to prevent false positives.
+    e.g. "may" (auxiliary verb) and standalone "days" removed — use specific
+    date phrases like "estimated delivery", "deliver by", "arrival date".
     """
     if state is None:
         state = {}
@@ -220,16 +266,20 @@ def grade_order_status(response: str, state: dict = None) -> float:
                                 "dispatched", "out for delivery", "processed",
                                 "order status"]):
         score += 0.25
+    # Delivery date: require specific date-intent phrases to avoid false positives.
+    # "may" (auxiliary verb) and bare "days" removed — they trigger on unrelated text.
     if any(w in text for w in ["expected delivery", "estimated delivery", "delivery date",
-                                "arrive", "arrival", "deliver by",
-                                "april", "march", "may", "days"]):
+                                "arrival date", "arrive by", "deliver by", "arrives on",
+                                "business days", "april", "march", "june", "july",
+                                "august", "september", "october", "november", "december",
+                                "january", "february"]):
         score += 0.20
     if any(w in text for w in ["hello", "hi", "thank you for reaching", "happy to help",
                                 "glad to help", "anything else", "have a great",
                                 "you're welcome", "my pleasure"]):
         score += 0.15
     if any(w in text for w in ["case number", "reference number", "ticket number",
-                                "case id", "ref #"]):
+                                "case id", "ref #", "ref no"]):
         score += 0.10
 
     return round(max(0.01, min(0.99, score)), 2)
@@ -243,9 +293,14 @@ def grade_damaged_product(response: str, state: dict = None) -> float:
       +0.25  apology / regret expressed
       +0.20  empathy / understanding shown
       +0.25  replacement or refund clearly offered
-      +0.15  timeline / ETA given for resolution
-      +0.15  case / reference number provided
+      +0.15  timeline / ETA given for resolution (specific time phrases only)
+      +0.15  case / reference number provided (specific phrases only)
     Total max = 1.00  (clamped to [0.01, 0.99])
+
+    Note: "ref" alone removed — too broad (matches "preferred", "referral")
+    Use "reference number", "ref #", "ref no" for case reference credit.
+    Bare "days" / "24" / "48" retained for timeline but standalone "week"
+    firmed up to "within a week" / "within the week" to reduce false positives.
     """
     if state is None:
         state = {}
@@ -267,11 +322,18 @@ def grade_damaged_product(response: str, state: dict = None) -> float:
                                 "send a new", "ship a new", "arrange",
                                 "new product", "exchange"]):
         score += 0.25
-    if any(w in text for w in ["days", "hours", "business days", "24", "48",
-                                "3-5", "week", "timeline", "within"]):
+    # Timeline: require specific time-intent phrases; bare "week" removed to avoid
+    # false positives like "last week" or "next week" in unrelated context.
+    if any(w in text for w in ["business days", "within 24", "within 48", "3-5 days",
+                                "within the week", "within a week", "within 3",
+                                "within 5", "hours", "timeline", "within",
+                                "24 hours", "48 hours"]):
         score += 0.15
+    # Case reference: "ref" alone triggers on "preferred", "referral", etc.
+    # Require explicit reference-number phrases only.
     if any(w in text for w in ["case number", "reference number", "ticket number",
-                                "case id", "ref", "confirmation"]):
+                                "case id", "ref #", "ref no", "confirmation number",
+                                "confirmation code"]):
         score += 0.15
 
     return round(max(0.01, min(0.99, score)), 2)
@@ -281,15 +343,21 @@ def grade_escalation(response: str, state: dict = None) -> float:
     """
     Grade a single agent response for the escalation (hard) task.
 
-    This grader is more demanding — frontier models must work for a high score:
+    This grader is intentionally demanding — frontier models must work across
+    multiple turns to achieve a high score:
+
       +0.20  genuine apology and empathy demonstrated
       +0.20  refund or compensation explicitly committed
       +0.20  manager / supervisor escalation offered
-             (only full credit at step >= 2; partial 0.10 at step 1 to require de-escalation first)
+             (full credit only at step >= 2; partial 0.10 at step 1)
       +0.15  concrete resolution timeline stated
       +0.15  case / reference number provided
-      +0.10  de-escalation language beyond generic apology
+      +0.10  strong de-escalation language beyond generic apology
     Total max = 1.00  (clamped to [0.01, 0.99])
+
+    Single-turn cap: If step == 1 (first agent turn), total score is capped at
+    0.60 to ensure the hard task cannot be fully solved in one response.
+    This forces multi-turn de-escalation → resolution → closure progression.
 
     Args:
         response: The agent's response string.
@@ -330,15 +398,15 @@ def grade_escalation(response: str, state: dict = None) -> float:
         else:
             score += 0.10   # Partial — jumped straight to escalation at step 1
 
-    # 4. Timeline / commitment
-    if any(w in text for w in ["processed", "within", "days", "hours",
-                                "48", "24", "3-5", "business days",
-                                "by tomorrow", "immediately"]):
+    # 4. Timeline / commitment (specific time-intent phrases)
+    if any(w in text for w in ["processed", "within", "business days",
+                                "within 48", "within 24", "3-5 days",
+                                "by tomorrow", "immediately", "24 hours", "48 hours"]):
         score += 0.15
 
     # 5. Case / reference number (shows procedural closure)
     if any(w in text for w in ["case number", "reference number", "ticket number",
-                                "case id", "confirmation number", "ref #"]):
+                                "case id", "confirmation number", "ref #", "ref no"]):
         score += 0.15
 
     # 6. De-escalation beyond generic sorry (calming, taking ownership)
@@ -350,6 +418,12 @@ def grade_escalation(response: str, state: dict = None) -> float:
     ])
     if deescalation_extra:
         score += 0.10
+
+    # ── Single-turn hard cap (step 1 only) ───────────────────────────────────
+    # Prevents a single perfectly-crafted response from fully solving the hard
+    # task. Frontier models must demonstrate multi-turn de-escalation ability.
+    if step <= 1:
+        score = min(score, 0.60)
 
     return round(max(0.01, min(0.99, score)), 2)
 

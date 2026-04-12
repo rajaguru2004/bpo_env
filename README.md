@@ -736,3 +736,64 @@ Returned by `reset()` and `step()`. All fields are typed and documented.
   "reward": 0.0
 }
 ```
+
+---
+
+## ✅ Validation Status
+
+> **Pre-submission checklist — all gates pass ✅**
+
+| Check | Status | Notes |
+|---|---|---|
+| HF Space deploys | ✅ | `rajaguru2004/bpo_env` responding at port 7860 |
+| `openenv validate` | ✅ | `spec_version`, typed models, `step()/reset()/state()` all pass |
+| Dockerfile builds | ✅ | Multi-stage build via `openenv-base`, uvicorn entrypoint |
+| Baseline reproduces | ✅ | `python inference.py` scores within ±0.05 |
+| 3+ tasks with graders | ✅ | `task_easy`, `task_medium`, `task_hard` — all rule-based |
+| Scores in [0.01, 0.99] | ✅ | Clamped in all grader functions and `log_end()` |
+| `IMAGE_NAME` defined | ✅ | `.env` and `.env.copy` both export `IMAGE_NAME` |
+| `inference.py` at root | ✅ | Emits `[START]`, `[STEP]`, `[END]` in required format |
+| OpenAI client used | ✅ | `openai.OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)` |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/reset` | POST | Reset episode with optional `task_name` |
+| `/step` | POST | Execute agent action, returns obs + reward + done |
+| `/state` | GET | Return current environment state |
+| `/tasks` | GET | List all tasks with grader metadata |
+| `/grade` | POST | Grade a full trajectory `{task_name, trajectory}` |
+| `/grade/{task_name}` | POST | Per-task single-response grader |
+| `/health` | GET | Health check endpoint |
+| `/docs` | GET | Auto-generated OpenAPI documentation |
+
+---
+
+## 🧮 Grader Scoring Formula
+
+All three graders use **deterministic, keyword-based rules** with zero LLM dependency.
+
+### Episode-Level Grader (`grade_episode`)
+
+| Component | Max Score | Description |
+|---|---|---|
+| Resolution completeness | 0.45 | `resolved + closure` → 0.45; `resolved` only → 0.25; partial stage → 0–0.15 |
+| Efficiency | 0.15 | Bell-curve on `steps/max_steps`; floor 0.05 for resolved episodes |
+| Customer mood | 0.10 | `satisfied` → 0.10; `neutral` → 0.05; `angry` → 0.00 |
+| Response quality | 0.15 | Avg `completeness_score` across trajectory steps |
+| Intent coverage | 0.15 | Fraction of required intents detected at ≥ 0.5 confidence |
+| **TOTAL** | **1.00** | Clamped to `[0.01, 0.99]` |
+
+### Per-Task Graders (Phase 2 runtime)
+
+| Task | Key Signals | Max Score |
+|---|---|---|
+| `order_status` (easy) | Tracking number, shipment status, delivery date, greeting, case ref | 1.00 |
+| `damaged_product` (medium) | Apology, empathy, replacement/refund, timeline, case ref | 1.00 |
+| `escalation` (hard) | Apology+empathy, refund commit, manager offer, timeline, case ref, de-escalation | 1.00 |
+
+> **Hard task note**: `grade_escalation` caps single-turn scores at **0.60** (step 1).
+> A perfect score requires multi-turn de-escalation → resolution → closure.
+
+---
