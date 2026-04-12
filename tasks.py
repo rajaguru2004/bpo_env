@@ -182,7 +182,8 @@ def grade_episode(task_name: str, trajectory: Any) -> float:
     total = resolution_score + efficiency_score + mood_score + quality_score
 
     # Clamp to strict (0.01, 0.99) — validator rejects exactly 0.0 and 1.0
-    return max(0.01, min(0.99, total))
+    # Round to 2 decimal places for consistent output
+    return round(max(0.01, min(0.99, total)), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -192,63 +193,165 @@ def grade_episode(task_name: str, trajectory: Any) -> float:
 # ---------------------------------------------------------------------------
 
 def grade_order_status(response: str, state: dict = None) -> float:
-    """Grade a single agent response for the order_status task."""
+    """
+    Grade a single agent response for the order_status task.
+
+    Scoring (no free base — blank responses score 0.01):
+      +0.30  tracking number / tracking ID provided
+      +0.25  shipment status clearly communicated
+      +0.20  expected / estimated delivery date mentioned
+      +0.15  professional greeting or closure phrase
+      +0.10  case / reference number given
+    Total max = 1.00  (clamped to [0.01, 0.99])
+    """
     if state is None:
         state = {}
+    # Blank / very short response gets minimum score
+    if not response or len(response.strip().split()) < 4:
+        return 0.01
+
     text = response.lower()
-    score = 0.2  # base: responded at all
-    if any(w in text for w in ["tracking", "tracking number", "trk", "tracking id"]):
-        score += 0.4
+    score = 0.0  # No free base — must actually say something useful
+
+    if any(w in text for w in ["tracking number", "tracking id", "trk", "tracking #",
+                                "shipment tracking"]):
+        score += 0.30
     if any(w in text for w in ["shipped", "delivered", "in transit", "on its way",
-                                "dispatched", "out for delivery", "processed"]):
-        score += 0.2
-    if any(w in text for w in ["delivery", "expected", "estimated", "arrive", "days",
-                                "april", "march", "may"]):
-        score += 0.2
-    return max(0.01, min(0.99, score))
+                                "dispatched", "out for delivery", "processed",
+                                "order status"]):
+        score += 0.25
+    if any(w in text for w in ["expected delivery", "estimated delivery", "delivery date",
+                                "arrive", "arrival", "deliver by",
+                                "april", "march", "may", "days"]):
+        score += 0.20
+    if any(w in text for w in ["hello", "hi", "thank you for reaching", "happy to help",
+                                "glad to help", "anything else", "have a great",
+                                "you're welcome", "my pleasure"]):
+        score += 0.15
+    if any(w in text for w in ["case number", "reference number", "ticket number",
+                                "case id", "ref #"]):
+        score += 0.10
+
+    return round(max(0.01, min(0.99, score)), 2)
 
 
 def grade_damaged_product(response: str, state: dict = None) -> float:
-    """Grade a single agent response for the damaged_product task."""
+    """
+    Grade a single agent response for the damaged_product task.
+
+    Scoring (no free base — blank responses score 0.01):
+      +0.25  apology / regret expressed
+      +0.20  empathy / understanding shown
+      +0.25  replacement or refund clearly offered
+      +0.15  timeline / ETA given for resolution
+      +0.15  case / reference number provided
+    Total max = 1.00  (clamped to [0.01, 0.99])
+    """
     if state is None:
         state = {}
+    if not response or len(response.strip().split()) < 4:
+        return 0.01
+
     text = response.lower()
-    score = 0.2  # base: responded at all
+    score = 0.0  # No free base
+
     if any(w in text for w in ["sorry", "apologize", "apologies", "regret",
-                                "sincerely apologize"]):
-        score += 0.2
+                                "sincerely apologize", "deeply apologize",
+                                "i'm sorry", "i am sorry"]):
+        score += 0.25
     if any(w in text for w in ["understand", "hear you", "concern", "frustrat",
-                                "inconvenience", "appreciate your patience"]):
-        score += 0.1
+                                "inconvenience", "appreciate your patience",
+                                "empathize", "i can imagine"]):
+        score += 0.20
     if any(w in text for w in ["replacement", "replace", "refund", "new unit",
-                                "send a new", "ship a new", "arrange"]):
-        score += 0.3
+                                "send a new", "ship a new", "arrange",
+                                "new product", "exchange"]):
+        score += 0.25
     if any(w in text for w in ["days", "hours", "business days", "24", "48",
-                                "3-5", "week", "timeline"]):
-        score += 0.2
-    return max(0.01, min(0.99, score))
+                                "3-5", "week", "timeline", "within"]):
+        score += 0.15
+    if any(w in text for w in ["case number", "reference number", "ticket number",
+                                "case id", "ref", "confirmation"]):
+        score += 0.15
+
+    return round(max(0.01, min(0.99, score)), 2)
 
 
 def grade_escalation(response: str, state: dict = None) -> float:
-    """Grade a single agent response for the escalation task."""
+    """
+    Grade a single agent response for the escalation (hard) task.
+
+    This grader is more demanding — frontier models must work for a high score:
+      +0.20  genuine apology and empathy demonstrated
+      +0.20  refund or compensation explicitly committed
+      +0.20  manager / supervisor escalation offered
+             (only full credit at step >= 2; partial 0.10 at step 1 to require de-escalation first)
+      +0.15  concrete resolution timeline stated
+      +0.15  case / reference number provided
+      +0.10  de-escalation language beyond generic apology
+    Total max = 1.00  (clamped to [0.01, 0.99])
+
+    Args:
+        response: The agent's response string.
+        state:    Dict with optional keys:
+                    "step" (int)  — current step number (1-based)
+                    "stage" (str) — current conversation stage
+    """
     if state is None:
         state = {}
+    if not response or len(response.strip().split()) < 4:
+        return 0.01
+
     text = response.lower()
-    score = 0.2  # base: responded at all
-    if any(w in text for w in ["sorry", "apologize", "sincerely", "apologies",
-                                "deeply sorry"]):
-        score += 0.2
+    score = 0.0
+    step = int(state.get("step", 1))
+
+    # 1. Apology + empathy (must be more than a token sorry)
+    apology_match = any(w in text for w in ["sorry", "apologize", "sincerely",
+                                             "apologies", "deeply sorry",
+                                             "i understand", "i hear you"])
+    if apology_match:
+        score += 0.20
+
+    # 2. Refund / compensation commitment
     if any(w in text for w in ["refund", "full refund", "compensation", "credit",
-                                "resolve", "process your refund"]):
-        score += 0.2
-    if any(w in text for w in ["manager", "supervisor", "escalate", "senior",
-                                "specialist", "team lead", "transfer",
-                                "connect you with"]):
-        score += 0.2
+                                "process your refund", "issue a refund",
+                                "reimburse"]):
+        score += 0.20
+
+    # 3. Manager / escalation — ONLY full credit after step 1
+    #    At step 1 the agent should first de-escalate, not immediately escalate.
+    escalation_match = any(w in text for w in ["manager", "supervisor", "escalate",
+                                                "senior", "specialist", "team lead",
+                                                "transfer", "connect you with"])
+    if escalation_match:
+        if step >= 2:
+            score += 0.20   # Full credit — de-escalation happened first
+        else:
+            score += 0.10   # Partial — jumped straight to escalation at step 1
+
+    # 4. Timeline / commitment
     if any(w in text for w in ["processed", "within", "days", "hours",
-                                "48", "24", "3-5", "business days"]):
-        score += 0.2
-    return max(0.01, min(0.99, score))
+                                "48", "24", "3-5", "business days",
+                                "by tomorrow", "immediately"]):
+        score += 0.15
+
+    # 5. Case / reference number (shows procedural closure)
+    if any(w in text for w in ["case number", "reference number", "ticket number",
+                                "case id", "confirmation number", "ref #"]):
+        score += 0.15
+
+    # 6. De-escalation beyond generic sorry (calming, taking ownership)
+    deescalation_extra = any(w in text for w in [
+        "i take full responsibility", "i take ownership",
+        "i assure you", "rest assured", "i personally",
+        "i will make sure", "i will ensure", "i will personally",
+        "you have my word", "i promise",
+    ])
+    if deescalation_extra:
+        score += 0.10
+
+    return round(max(0.01, min(0.99, score)), 2)
 
 
 # ---------------------------------------------------------------------------

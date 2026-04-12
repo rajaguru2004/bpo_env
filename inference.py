@@ -60,7 +60,9 @@ if os.path.exists(_env_path):
 # Configuration — Validator-injected variables take priority
 # ---------------------------------------------------------------------------
 
-# API credentials: validator injects API_KEY; local dev uses HF_TOKEN
+# API credentials:
+# Validator injects API_KEY; HF_TOKEN is also accepted as the primary API key
+# (per mandatory spec: HF_TOKEN is your Hugging Face / API key)
 API_KEY = (
     os.getenv("API_KEY")
     or os.getenv("HF_TOKEN")
@@ -260,6 +262,10 @@ def log_step(
     error_val = error if error else "null"
     done_val = str(done).lower()
     action_clean = action.replace("\n", " ").replace("\r", "")
+    # Strip structured metadata block appended by response_formatter (keep clean for logs)
+    _meta_marker = "---\n[Action:"
+    if _meta_marker in action_clean:
+        action_clean = action_clean.split(_meta_marker)[0].strip()
     print(
         f"[STEP] step={step} action={action_clean} reward={reward:.2f} "
         f"done={done_val} error={error_val}",
@@ -277,7 +283,7 @@ def log_end(
     score = max(0.01, min(0.99, score))
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} "
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} "
         f"rewards={rewards_str}",
         flush=True,
     )
@@ -680,21 +686,32 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                         agent_response, step, done, internal_task_name
                     )
 
+                # 7a+. Strip formatter metadata BEFORE submitting to env
+                # The formatter appends [Action/Stage/Status] block for human readability,
+                # but the grader should only see the clean agent response text.
+                clean_response = agent_response
+                if _format_response:
+                    # Detect the separator the formatter uses
+                    for marker in ["\n---\n[Action:", "\n[Action:", "\n[Stage:"]:
+                        if marker in clean_response:
+                            clean_response = clean_response.split(marker)[0].strip()
+                            break
+
                 # Send step to environment
                 try:
                     if CustomerSupportAction is None:
                         raise ImportError("CustomerSupportAction not imported.")
-                    
-                    action = CustomerSupportAction(response=agent_response)
+
+                    action = CustomerSupportAction(response=clean_response)
                     result = env.step(action)
 
                     step_obs = result.observation
-                    reward = max(0.01, min(0.99, result.reward or 0.01))
-                    rule_score = getattr(step_obs, "rule_score", 0.0)
+                    reward = round(max(0.01, min(0.99, result.reward or 0.01)), 2)
+                    rule_score = round(getattr(step_obs, "rule_score", 0.0), 2)
                     done = result.done
                     error = None
 
-                    grader_score = getattr(step_obs, "grader_score", 0.0)
+                    grader_score = round(getattr(step_obs, "grader_score", 0.0), 2)
                     next_stage = getattr(step_obs, "conversation_stage", current_stage)
                     stage_advanced = (next_stage != current_stage)
 
@@ -770,11 +787,13 @@ def run_task(task_name: str, server_url: str) -> Dict[str, Any]:
                 raw_score = 0.01
 
             # Clamp to (0.01, 0.99) — validator rejects exactly 0.0 and 1.0
-            results["score"] = max(0.01, min(0.99, raw_score))
+            # Round to 2 decimal places for clean output
+            results["score"] = round(max(0.01, min(0.99, raw_score)), 2)
 
-            results["avg_rule_score"] = (
+            results["avg_rule_score"] = round(
                 sum(results["rule_scores"]) / len(results["rule_scores"])
-                if results["rule_scores"] else 0.0
+                if results["rule_scores"] else 0.0,
+                2,
             )
 
             # Success: grader says so, or episode resolved, or score above threshold

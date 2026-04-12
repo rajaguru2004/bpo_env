@@ -1,40 +1,68 @@
-# Force push: 2026-04-08
+# OpenEnv Environment Specification — BPO Customer Support Environment
+# Force push: 2026-04-12
 spec_version: 1
 
 name: bpo_env
 version: 1.0.0
+author: Skill Hive
+license: apache-2.0
 description: >
   BPO Customer Support Resolution Environment.
   An RL environment where an AI agent acts as a customer support executive,
   handling real-world customer service scenarios across three difficulty levels.
+  The environment enforces structured conversation workflows (SOPs), provides
+  multi-intent classification, stage-aware rewards, and deterministic rule-based
+  graders — enabling reproducible agent evaluation.
+
+tags:
+  - openenv
+  - customer-support
+  - bpo
+  - rl-environment
+  - multi-task
+  - rule-based-grader
 
 tasks:
   - id: task_easy
     name: order_status
     difficulty: easy
-    max_steps: 10
-    description: Customer wants to know the status of their order.
+    max_steps: 5
+    description: >
+      Customer wants to know the status of their order (#12345).
+      Agent must greet, provide tracking number, share shipment status,
+      give estimated delivery date, and close the conversation.
     grader:
-      type: llm
-      prompt_template: "Score this 0.0 to 1.0: Did the agent provide the order tracking number, shipment status, and estimated delivery date in a professional and helpful manner? Response: {response}"
+      type: rule
+      function: grade_order_status
+      module: tasks
 
   - id: task_medium
     name: damaged_product
     difficulty: medium
-    max_steps: 15
-    description: Customer received a damaged product and wants a replacement or refund.
+    max_steps: 8
+    description: >
+      Customer received a damaged product and wants a replacement or refund.
+      Agent must apologize, show empathy, diagnose the issue, offer a
+      replacement or refund with a timeline, and close professionally.
     grader:
-      type: llm
-      prompt_template: "Score this 0.0 to 1.0: Did the agent apologize, show empathy, and offer a clear replacement or refund resolution with a timeline for a damaged product complaint? Response: {response}"
+      type: rule
+      function: grade_damaged_product
+      module: tasks
 
   - id: task_hard
     name: escalation
     difficulty: hard
-    max_steps: 20
-    description: Angry customer demanding a full refund and to speak with a manager.
+    max_steps: 12
+    description: >
+      Angry customer demanding a full refund and to speak with a manager.
+      Agent must de-escalate across multiple turns, process the refund,
+      offer manager escalation, provide case reference, and maintain
+      professionalism throughout the conversation.
     grader:
-      type: llm
-      prompt_template: "Score this 0.0 to 1.0: Did the agent de-escalate an angry customer, process their refund request, offer escalation to a manager, and maintain professionalism throughout? Response: {response}"
+      type: rule
+      function: grade_escalation
+      module: tasks
+
 runtime: fastapi
 app: server.app:app
 type: space

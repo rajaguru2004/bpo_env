@@ -170,8 +170,8 @@ async def grade_trajectory(request: Request):
     task_name  = body.get("task_name", "order_status")
     trajectory = body.get("trajectory", {})
     score = grade_episode(task_name, trajectory)
-    # Clamp to (0.01, 0.99) — validator rejects exactly 0.0 and 1.0
-    score = max(0.01, min(0.99, float(score)))
+    # Clamp to (0.01, 0.99) and round to 2 decimal places
+    score = round(max(0.01, min(0.99, float(score))), 2)
     return {"task": task_name, "score": score}
 
 
@@ -202,15 +202,20 @@ async def grade_task(task_name: str, request: Request):
     response = body.get("response", "")
     state    = body.get("state", {})
 
+    # Inject step number into state so graders like grade_escalation can apply
+    # step-aware scoring (e.g. manager escalation at step>=2 gets full credit)
+    if "step" not in state:
+        state["step"] = body.get("step", 1)
+
     # grader is a plain callable: (response: str, state: dict) -> float
     score = float(task["grader"](response, state))
-    # Clamp to (0.01, 0.99)
-    score = max(0.01, min(0.99, score))
+    # Round to 2 decimal places and clamp to (0.01, 0.99)
+    score = round(max(0.01, min(0.99, score)), 2)
 
     return {
         "task":   task_name,
-        "score":  round(score, 4),
-        "reward": round(score, 4),
+        "score":  score,
+        "reward": score,
         "done":   True,
     }
 
